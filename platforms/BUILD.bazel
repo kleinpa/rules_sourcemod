@@ -1,0 +1,53 @@
+"""Target platforms for SourceMod extensions.
+
+Most Source-engine dedicated servers (srcds) are 32-bit, so extensions must be
+built as 32-bit shared objects to be loadable. The old build hardcoded `-m32`
+into every compile and link action; expressing it as a platform instead lets the
+C++ toolchain resolve correctly and keeps 64-bit builds (used by newer engine
+branches) a one-flag change.
+
+Usage:
+    bazel build --platforms=@rules_sourcemod//platforms:linux_x86_32 //...
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+# Lets macros (which run before configuration, so ctx.target_platform_has_constraint
+# is unavailable) branch on word size with select(), the same way rule
+# implementations already do via the cpu constraint directly.
+config_setting(
+    name = "x86_64",
+    constraint_values = ["@platforms//cpu:x86_64"],
+)
+
+platform(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+platform(
+    name = "windows_x86_32",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+platform(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)

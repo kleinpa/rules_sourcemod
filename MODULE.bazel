@@ -1,0 +1,40 @@
+"""rules_sourcemod — Bazel rules for building SourceMod extensions and plugins.
+
+This module replaces the upstream AMBuild/Python build system with standard
+Bazel C++ toolchain builds. See README.md for the rationale and usage.
+"""
+
+module(
+    name = "rules_sourcemod",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+
+# Archive assembly for sourcemod_package.
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
+# ---------------------------------------------------------------------------
+# SourceMod SDK sources.
+#
+# The SDK is header-only from our perspective (plus smsdk_ext.cpp), so it is
+# fetched as source and compiled with the consumer's own C++ toolchain. This is
+# what allows a standard cc_binary to replace AMBuild entirely.
+# ---------------------------------------------------------------------------
+sourcemod = use_extension("//sourcemod:extensions.bzl", "sourcemod")
+use_repo(sourcemod, "sourcemod_sdk")
+
+register_toolchains("//spcomp:spcomp_toolchain")
+
+# ---------------------------------------------------------------------------
+# HL2SDK + Metamod:Source for the css branch. Requested by this module itself
+# -- not left for each consumer to ask for independently -- because
+# //sourcemod:sourcemod_css is a ready-made preset: a consumer that only wants
+# the css game server can depend on that target directly without ever naming
+# @hl2sdk_css or @metamod_source itself.
+# ---------------------------------------------------------------------------
+hl2sdk = use_extension("//hl2sdk:repositories.bzl", "hl2sdk")
+hl2sdk.branch(name = "css")
+use_repo(hl2sdk, "hl2sdk_css", "metamod_source")

@@ -1,0 +1,33 @@
+load(":server.bzl", "sourcemod_game_server")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["sdk.BUILD.bazel"])
+
+# Ready-made preset for the one branch this module fetches HL2SDK/Metamod for
+# itself (see the `hl2sdk` extension usage in MODULE.bazel). A consumer just
+# depends on this directly, adding whichever bundled plugins it wants from
+# @sourcemod_sdk//:plugin_<name> alongside it (none are included here -- see
+# sourcemod_game_server's docstring in server.bzl):
+#
+#     pkg_tar(
+#         name = "sourcemod_layer",
+#         srcs = [
+#             "@rules_sourcemod//sourcemod:sourcemod_css",
+#             "@sourcemod_sdk//:plugin_basecommands",
+#         ],
+#         package_dir = "/opt/game/cstrike",
+#     )
+#
+# without ever naming @hl2sdk_css or @metamod_source, or repeating the
+# sourcemod_game_server() call. Calling the macro directly (see server.bzl) is
+# still available for a branch not presetted here.
+#
+# Tagged manual so `bazel build //...` in this repo doesn't compile the whole
+# SourceMod+HL2SDK+Metamod tree on every run; //tests:sourcemod_css_builds_test
+# still builds it explicitly.
+sourcemod_game_server(
+    name = "sourcemod_css",
+    branch = "css",
+    #tags = ["manual"],
+)

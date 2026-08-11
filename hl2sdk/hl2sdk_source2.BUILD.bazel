@@ -1,0 +1,364 @@
+"""Build overlay for one fetched Source 2 HL2SDK engine branch.
+
+The Source 1 counterpart, hl2sdk.BUILD.bazel, is the file to read first: this
+one is the same translation of `SdkHelpers.configureCxx()` from
+alliedmodders/hl2sdk-manifests, and only the differences are commented here.
+
+Substituted by //hl2sdk:repositories.bzl from the branch's entry in its
+HL2SDK_BRANCHES table, for the branches whose entry sets `source2`.
+
+What a Source 2 SDK does differently:
+
+  - Nothing is compiled from the SDK tree. Source 1 branches ship tier1 and
+    mathlib as sources and upstream builds them; here `tier1/` holds six files
+    and there is no `tier1/AMBuilder` for upstream's findLibrary() to discover,
+    so it returns None and the manifest's `postlink_libs` supply mathlib and
+    interfaces as prebuilt archives instead.
+  - There is no vstdlib. tier0 absorbed it.
+  - Protobuf is part of the ABI, not an implementation detail: the engine's own
+    headers include generated message headers, so the tree carries a protobuf
+    source drop, a prebuilt runtime archive, and a prebuilt `protoc` to compile
+    the .proto files with.
+  - The C++ standard library is linked statically and with the pre-C++11 string
+    ABI, because that is what Valve's libtier0.so exports. See the cs2 entry in
+    HL2SDK_BRANCHES.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])  # SDK license; redistribution of engine binaries is limited.
+
+_INCLUDE_PATHS = %{include_paths}
+
+_BRANCH_DEFINES = %{defines}
+
+_POSIX_ONLY_DEFINES = %{posix_defines}
+
+# Where this branch's protobuf drop lives, e.g. "thirdparty/protobuf-3.21.8".
+# The version is in the path, so it is branch metadata rather than a constant.
+_PROTOBUF_DIR = "%{protobuf_dir}"
+
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Prebuilt libraries — the manifest's `dynamic_libs`, `postlink_libs` and
+# `libs` lists, verbatim.
+#
+# Source 2 is 64-bit only on both platforms, so unlike the Source 1 overlay
+# there is no per-architecture spread to express here.
+# ---------------------------------------------------------------------------
+
+cc_import(
+    name = "tier0_linux_x86_64",
+    shared_library = "lib/linux64/libtier0.so",
+)
+
+cc_import(
+    name = "tier0_windows_x86_64",
+    interface_library = "lib/public/win64/tier0.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "mathlib_linux_x86_64",
+    static_library = "lib/linux64/mathlib.a",
+)
+
+cc_import(
+    name = "mathlib_windows_x86_64",
+    static_library = "lib/public/win64/mathlib.lib",
+)
+
+cc_import(
+    name = "interfaces_linux_x86_64",
+    static_library = "lib/linux64/interfaces.a",
+)
+
+cc_import(
+    name = "interfaces_windows_x86_64",
+    static_library = "lib/public/win64/interfaces.lib",
+)
+
+# The protobuf runtime the generated message code links against. It has to be
+# this copy rather than a protobuf from the module graph: it is built with the
+# same pre-C++11 string ABI as the rest of this SDK, and mixing the two shows up
+# as link errors naming std::__cxx11::basic_string.
+cc_import(
+    name = "protobuf_linux_x86_64",
+    static_library = "lib/linux64/release/libprotobuf.a",
+)
+
+cc_import(
+    name = "protobuf_windows_x86_64",
+    static_library = "lib/public/win64/2015/libprotobuf.lib",
+)
+
+alias(
+    name = "tier0_import",
+    actual = select({
+        ":windows_x86_64": ":tier0_windows_x86_64",
+        "//conditions:default": ":tier0_linux_x86_64",
+    }),
+)
+
+alias(
+    name = "mathlib_import",
+    actual = select({
+        ":windows_x86_64": ":mathlib_windows_x86_64",
+        "//conditions:default": ":mathlib_linux_x86_64",
+    }),
+)
+
+alias(
+    name = "interfaces_import",
+    actual = select({
+        ":windows_x86_64": ":interfaces_windows_x86_64",
+        "//conditions:default": ":interfaces_linux_x86_64",
+    }),
+)
+
+alias(
+    name = "protobuf_import",
+    actual = select({
+        ":windows_x86_64": ":protobuf_windows_x86_64",
+        "//conditions:default": ":protobuf_linux_x86_64",
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# Protobuf
+#
+# This sits below :hl2sdk_headers rather than beside it, and the direction is
+# forced: public/eiface.h, public/inetchannel.h and game/shared/igamesystem.h
+# all `#include "network_connection.pb.h"`, so the SDK headers do not compile
+# until the message code has been generated.
+#
+# The platform defines are repeated here for the same reason -- these targets
+# cannot reach them through :hl2sdk_headers without a cycle, and compiling the
+# protobuf runtime's headers with a different string ABI than the SDK is exactly
+# the mismatch that makes the archive above fail to link.
+# ---------------------------------------------------------------------------
+
+_ABI_DEFINES = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": _POSIX_ONLY_DEFINES,
+})
+
+cc_library(
+    name = "protobuf_headers",
+    hdrs = glob(
+        [
+            _PROTOBUF_DIR + "/src/**/*.h",
+            _PROTOBUF_DIR + "/src/**/*.inc",
+        ],
+        allow_empty = False,
+    ),
+    defines = _ABI_DEFINES,
+    includes = [_PROTOBUF_DIR + "/src"],
+    deps = [":protobuf_import"],
+)
+
+# `protoc` is a prebuilt binary from the SDK's own devtools, which is what
+# upstream runs (`protoc_path` in the manifest). It is the one build tool in
+# these rules that is not built from source, and it is a host binary: the tree
+# carries a Linux x86-64 one and a Windows one and nothing else, so a build on
+# another execution platform has no way to generate this code.
+filegroup(
+    name = "protoc",
+    srcs = select({
+        "@platforms//os:windows": ["devtools/bin/protoc.exe"],
+        "//conditions:default": ["devtools/bin/linux/protoc"],
+    }),
+)
+
+# The SDK headers include the generated header unqualified, as
+# "network_connection.pb.h", so `common` is the proto path root rather than the
+# SDK root -- that is also how upstream reaches it, via the `common` entry in
+# the manifest's include_paths.
+#
+# Only the messages Metamod's Source 2 provider needs are generated. The SDK
+# ships a dozen more .proto files; an extension that needs one adds a rule of
+# this shape.
+genrule(
+    name = "network_connection_proto_gen",
+    srcs = ["common/network_connection.proto"] + glob(
+        [_PROTOBUF_DIR + "/src/google/protobuf/*.proto"],
+        allow_empty = False,
+    ),
+    outs = [
+        "gen/network_connection.pb.cc",
+        "gen/network_connection.pb.h",
+    ],
+    # Built by concatenation rather than str.format(): the command is shell,
+    # and `${proto%...}` reads as a malformed replacement field.
+    cmd = "\n".join([
+        "set -eu",
+        'proto="$(execpath common/network_connection.proto)"',
+        'sdk="$${proto%/common/network_connection.proto}"',
+        'mkdir -p "$(RULEDIR)/gen"',
+        '"$(execpath :protoc)"' +
+        ' --proto_path="$$sdk/common"' +
+        ' --proto_path="$$sdk/' + _PROTOBUF_DIR + '/src"' +
+        ' --cpp_out="$(RULEDIR)/gen"' +
+        ' "$$proto"',
+    ]),
+    tools = [":protoc"],
+)
+
+cc_library(
+    name = "network_connection_proto",
+    srcs = ["gen/network_connection.pb.cc"],
+    hdrs = ["gen/network_connection.pb.h"],
+    copts = UPSTREAM_WARNING_COPTS,
+    includes = ["gen"],
+    deps = [":protobuf_headers"],
+)
+
+# ---------------------------------------------------------------------------
+# Headers
+# ---------------------------------------------------------------------------
+
+# The SDK headers an extension compiles against.
+#
+# As in the Source 1 overlay, `hdrs` is a broad glob because the SDK's headers
+# include each other densely and upstream simply puts the directories on the
+# include path.
+cc_library(
+    name = "hl2sdk_headers",
+    hdrs = glob(["public/**/*.h"], allow_empty = False) + glob(
+        # The rest are allowed to come up empty rather than treated as a sign
+        # the tree did not extract: `common` is on the manifest's include path
+        # but holds only .proto files on a Source 2 branch, and the .H/.inl
+        # spellings and game/shared are Source 1 habits the tree has mostly
+        # shed. public/**/*.h is the one that has to match.
+        [
+            "common/**/*.h",
+            "game/shared/**/*.h",
+            "game/shared/**/*.inc",
+            "public/**/*.H",
+            "public/**/*.inl",
+        ],
+        allow_empty = True,
+    ),
+    defines = [
+        "SOURCE_ENGINE=%{source_engine_code}",
+        "GAME_DLL",
+        "RAD_TELEMETRY_DISABLED",
+    ] + _BRANCH_DEFINES + %{se_defines} + select({
+        ":windows_x86_64": [
+            "COMPILER_MSVC",
+            "COMPILER_MSVC64",
+            "WIN32",
+            "WIN64",
+        ],
+        "//conditions:default": [
+            "COMPILER_GCC",
+            "_LINUX",
+            "LINUX",
+            "POSIX",
+            "GNUC",
+        ] + _POSIX_ONLY_DEFINES,
+    }) + select({
+        # Source 2 is 64-bit only, but configureCxx() keys these off the
+        # architecture rather than the generation, so this does too.
+        "@platforms//cpu:x86_64": [
+            "X64BITS",
+            "PLATFORM_64BITS",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = _INCLUDE_PATHS,
+    # The manifest's `uses_system_cxxlib: false` is upstream's way of saying
+    # "keep -static-libstdc++", and that flag is deliberately *not* reproduced
+    # here. Bazel's C++ toolchain puts an explicit `-lstdc++` on every link, and
+    # an explicit -l defeats -static-libstdc++: the driver only substitutes the
+    # archive for the `-lstdc++` it adds itself. Passing the flag anyway would
+    # leave a no-op in the build claiming to do something load-bearing.
+    #
+    # What the field is actually protecting is the string ABI, and that is
+    # carried by `_GLIBCXX_USE_CXX11_ABI=0` in the branch's posix_defines, which
+    # does take effect: the resulting .so has no std::__cxx11 symbols and
+    # resolves Valve's libtier0.so exports.
+    #
+    # The cost is a NEEDED entry on libstdc++.so.6 that upstream's own binaries
+    # do not have, which the deployment satisfies the same way it satisfies
+    # every other runtime dependency -- by shipping a libstdc++ at least as new
+    # as the build host's. Dual-ABI libstdc++ still exports the pre-C++11
+    # string symbols, so a modern one serves.
+    linkopts = select({
+        "@platforms//os:windows": ["legacy_stdio_definitions.lib"],
+        "//conditions:default": ["-lm"],
+    }),
+    deps = [
+        ":network_connection_proto",
+        ":tier0_import",
+    ],
+)
+
+# The server-side game headers. Kept separate for the same reason as in the
+# Source 1 overlay, even though a Source 2 manifest already names game/server
+# among its include paths.
+cc_library(
+    name = "hl2sdk_game_server",
+    hdrs = glob(
+        [
+            "game/server/**/*.h",
+            "game/server/**/*.inl",
+        ],
+        allow_empty = True,
+    ),
+    includes = [
+        "game/server",
+        "game/shared",
+    ],
+    deps = [":hl2sdk_headers"],
+)
+
+# ---------------------------------------------------------------------------
+# SDK sources that a Metamod core compiles into itself
+#
+# HL2Library() in Metamod's AMBuildScript adds these two to the *binary's* own
+# source list for Source 2 targets rather than linking them from a library, so
+# they are exported as files and compiled by the consumer with its flags.
+# memoverride.cpp in particular only works that way: it replaces global operator
+# new/delete for the module it is linked into.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "source2_module_srcs",
+    srcs = [
+        "public/tier0/memoverride.cpp",
+        "tier1/convar.cpp",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Aggregates, matching the Source 1 overlay's target names so a consumer that
+# does not care which generation it is on can depend on the same labels.
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "hl2sdk_libs",
+    deps = [
+        ":hl2sdk_headers",
+        ":interfaces_import",
+        ":mathlib_import",
+    ],
+)
+
+cc_library(
+    name = "hl2sdk",
+    deps = [
+        ":hl2sdk_libs",
+        "@metamod_source//:metamod_headers",
+    ],
+)

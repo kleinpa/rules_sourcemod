@@ -1,0 +1,7 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "hl2sdk.BUILD.bazel",
+    "hl2sdk_source2.BUILD.bazel",
+    "metamod.BUILD.bazel",
+])

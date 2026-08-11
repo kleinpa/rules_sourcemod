@@ -1,0 +1,164 @@
+"""Build overlay for the fetched Metamod:Source sources.
+
+A Metamod extension needs two things from this tree: SourceHook (the vtable
+hooking library, header-only in the form extensions use it) and the ISmmAPI /
+ISmmPlugin interface headers.
+
+The include roots mirror `ConfigureForHL2()` in the AMBuild template, which adds
+`core` and `core/sourcehook`.
+
+Beyond headers, this file also compiles the deliverables needed at runtime: the
+loader shim the engine loads, and -- through //hl2sdk:metamod_cores.bzl -- one
+core per engine branch the build asked for. Which branches those are is
+substituted in by //hl2sdk:repositories.bzl.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_sourcemod//hl2sdk:metamod_cores.bzl", "CORE_COPTS", "PLATFORM_DEFINES", "metamod_cores")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # zLib/libpng
+
+# ---------------------------------------------------------------------------
+# Headers (extensions depend on this)
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "metamod_headers",
+    hdrs = glob(
+        [
+            "core/*.h",
+            "core/sourcehook/*.h",
+            "public/*.h",
+        ],
+        allow_empty = False,
+    ),
+    includes = [
+        "core",
+        "core/sourcehook",
+        "public",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# MetaMod:Source loader
+#
+# This shim is what the engine loads. It detects the game backend then dlopens
+# metamod.<backend>.so from the same directory.
+#
+# Built with MMS.Library (no HL2SDK): only SourceHook headers are needed
+# (angle-bracket includes sh_memfuncinfo.h / sh_memory.h from core/sourcehook/).
+#
+# LIB_PREFIX/LIB_SUFFIX name the *game* binary the loader looks for, and they
+# are also this file's own name -- the loader has to be called what the engine
+# would have called the game binary, because being found in its place is the
+# whole mechanism. gamedll.cpp pastes them into string literals, so they must
+# arrive with their quotes intact.
+#
+# Both Linux spellings are built, because the two engine generations disagree:
+#
+#   server.so     Source 1. The engine loads addons/metamod/bin/<arch>/server.so
+#                 by way of a .vdf in addons/, and the game binary it stands in
+#                 for is also `server.so`.
+#   libserver.so  Source 2. There is no .vdf scanner; the loader is found
+#                 because gameinfo.gi's SearchPaths name its directory ahead of
+#                 the game's own, and Source 2 prefixes its module names.
+#
+# loader/AMBuilder builds both for linux x86_64 for exactly this reason.
+# ---------------------------------------------------------------------------
+
+_LOADER_SRCS = glob([
+    "loader/*.cpp",
+    "loader/*.h",
+])
+
+_LOADER_LINKOPTS = select({
+    "@platforms//os:linux": ["-ldl"],
+    "//conditions:default": [],
+})
+
+cc_binary(
+    name = "_loader_so",
+    srcs = _LOADER_SRCS,
+    copts = CORE_COPTS,
+    linkopts = _LOADER_LINKOPTS,
+    linkshared = True,
+    local_defines = PLATFORM_DEFINES + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "LIB_PREFIX=\\\"\\\"",
+            "LIB_SUFFIX=\\\".so\\\"",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":metamod_headers"],
+)
+
+genrule(
+    name = "metamod_loader",
+    srcs = [":_loader_so"],
+    outs = ["server.so"],
+    cmd = "cp $(SRCS) $@",
+)
+
+cc_binary(
+    name = "_loader_lib_so",
+    srcs = _LOADER_SRCS,
+    copts = CORE_COPTS,
+    linkopts = _LOADER_LINKOPTS,
+    linkshared = True,
+    local_defines = PLATFORM_DEFINES + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "LIB_PREFIX=\\\"lib\\\"",
+            "LIB_SUFFIX=\\\".so\\\"",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":metamod_headers"],
+)
+
+genrule(
+    name = "metamod_loader_lib",
+    srcs = [":_loader_lib_so"],
+    outs = ["libserver.so"],
+    cmd = "cp $(SRCS) $@",
+)
+
+# ---------------------------------------------------------------------------
+# Cores — metamod.<extension>.so, one per requested engine branch.
+# ---------------------------------------------------------------------------
+
+metamod_cores(branches = %{cores})
+
+# ---------------------------------------------------------------------------
+# Static data
+#
+# metamod_vdf/metamod_x64_vdf tell a Source 1 engine where the loader is: the
+# engine scans addons/*.vdf, and the x64 variant is the one picked up on 64-bit
+# Linux srcds while the x86 variant is ignored. Source 2 has no equivalent and
+# finds the loader through gameinfo.gi instead.
+#
+# metaplugins.ini is the plugin list Metamod reads at startup. Upstream ships it
+# containing nothing but comments, which is what a server whose plugins all
+# declare themselves with a .vdf wants -- but it is still shipped, so a server
+# operator has the documented file to edit.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "metamod_vdf",
+    srcs = ["support/metamod_linux64.vdf"],
+)
+
+genrule(
+    name = "metamod_x64_vdf",
+    srcs = ["support/metamod_linux64.vdf"],
+    outs = ["metamod_x64.vdf"],
+    cmd = "cp $(SRCS) $@",
+)
+
+filegroup(
+    name = "metaplugins_ini",
+    srcs = ["support/metaplugins.ini"],
+)

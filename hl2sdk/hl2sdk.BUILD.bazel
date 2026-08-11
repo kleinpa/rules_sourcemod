@@ -1,0 +1,375 @@
+"""Build overlay for one fetched HL2SDK engine branch.
+
+This is a direct translation of `SdkHelpers.configureCxx()` in
+alliedmodders/hl2sdk-manifests, which is what upstream AMBuild runs: the include
+paths, the SOURCE_ENGINE/GAME_DLL defines, the per-compiler warning suppressions,
+and the tier0/vstdlib link.
+
+Substituted by //hl2sdk:repositories.bzl from the branch's entry in its
+HL2SDK_BRANCHES table, so every engine branch shares this one file.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])  # SDK license; redistribution of engine binaries is limited.
+
+_INCLUDE_PATHS = %{include_paths}
+
+_BRANCH_DEFINES = %{defines}
+
+_POSIX_ONLY_DEFINES = %{posix_defines}
+
+# tier0 and vstdlib are the one place this build consumes prebuilt binaries.
+# Valve does not ship their sources -- the tree carries a tier0_exclude.vpc and
+# no tier0/*.cpp -- so there is nothing to compile. Everything else in the SDK
+# that this needs is headers.
+#
+# The Linux .so files are the `_srv` (dedicated server) variants, matching what
+# the css manifest names for a server-side extension.
+# On Windows only the import library is in the SDK -- tier0.dll/vstdlib.dll ship
+# with the game, so `system_provided` says the runtime DLL comes from elsewhere.
+# On Linux the SDK carries the .so itself and it is linked directly.
+#
+# Both are per-architecture. srcds is usually 32-bit, but newer engine branches
+# are 64-bit, so the arch comes from the target platform rather than being
+# assumed. The manifest names these paths per arch; so does this.
+cc_import(
+    name = "tier0_windows_x86_32",
+    interface_library = "lib/public/x86/tier0.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "tier0_windows_x86_64",
+    interface_library = "lib/public/x64/tier0.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "tier0_linux_x86_32",
+    shared_library = "lib/public/linux/libtier0_srv.so",
+)
+
+cc_import(
+    name = "tier0_linux_x86_64",
+    shared_library = "lib/public/linux64/libtier0_srv.so",
+)
+
+cc_import(
+    name = "vstdlib_windows_x86_32",
+    interface_library = "lib/public/x86/vstdlib.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "vstdlib_windows_x86_64",
+    interface_library = "lib/public/x64/vstdlib.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "vstdlib_linux_x86_32",
+    shared_library = "lib/public/linux/libvstdlib_srv.so",
+)
+
+cc_import(
+    name = "vstdlib_linux_x86_64",
+    shared_library = "lib/public/linux64/libvstdlib_srv.so",
+)
+
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:linux",
+    ],
+)
+
+alias(
+    name = "tier0_import",
+    actual = select({
+        ":linux_x86_32": ":tier0_linux_x86_32",
+        ":windows_x86_32": ":tier0_windows_x86_32",
+        ":windows_x86_64": ":tier0_windows_x86_64",
+        "//conditions:default": ":tier0_linux_x86_64",
+    }),
+)
+
+alias(
+    name = "vstdlib_import",
+    actual = select({
+        ":linux_x86_32": ":vstdlib_linux_x86_32",
+        ":windows_x86_32": ":vstdlib_windows_x86_32",
+        ":windows_x86_64": ":vstdlib_windows_x86_64",
+        "//conditions:default": ":vstdlib_linux_x86_64",
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# tier1 and mathlib — compiled from the SDK's own sources.
+#
+# These carry the implementations of ConVar, ConCommand, KeyValues, CUtlBuffer
+# and the vector math, which every SDK consumer references and neither tier0
+# nor vstdlib provides. Without them a .so links cleanly and then fails at
+# dlopen with `undefined symbol: _ZN6ConVarD1Ev`.
+#
+# Built rather than taken from the prebuilt lib/public/<arch>/tier1.a that also
+# ships in the tree: upstream's SdkHelpers.ambuild does the same, compiling
+# each through sdk/<name>/AMBuilder, and the sources are right here. The
+# prebuilts are additionally built against an unknown toolchain, which is the
+# thing the pinned sysroot exists to avoid.
+#
+# Source lists mirror those AMBuilder files.
+# ---------------------------------------------------------------------------
+
+_SDK_LIB_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-"],
+    "//conditions:default": [
+        "-fPIC",
+        "-fno-strict-aliasing",
+        # Specific to this tree; the rest of the suppressions are the shared
+        # upstream set.
+        "-Wno-write-strings",
+    ],
+}) + UPSTREAM_WARNING_COPTS
+
+cc_library(
+    name = "tier1",
+    srcs = [
+        "tier1/bitbuf.cpp",
+        "tier1/byteswap.cpp",
+        "tier1/characterset.cpp",
+        "tier1/checksum_crc.cpp",
+        "tier1/checksum_md5.cpp",
+        "tier1/checksum_sha1.cpp",
+        "tier1/commandbuffer.cpp",
+        "tier1/convar.cpp",
+        "tier1/datamanager.cpp",
+        "tier1/diff.cpp",
+        "tier1/exprevaluator.cpp",
+        "tier1/fileio.cpp",
+        "tier1/generichash.cpp",
+        "tier1/ilocalize.cpp",
+        "tier1/interface.cpp",
+        "tier1/KeyValues.cpp",
+        "tier1/keyvaluesjson.cpp",
+        "tier1/kvpacker.cpp",
+        "tier1/lzmaDecoder.cpp",
+        "tier1/lzss.cpp",
+        "tier1/mempool.cpp",
+        "tier1/memstack.cpp",
+        "tier1/NetAdr.cpp",
+        "tier1/newbitbuf.cpp",
+        "tier1/pathmatch.cpp",
+        "tier1/qsort_s.cpp",
+        "tier1/rangecheckedvar.cpp",
+        "tier1/reliabletimer.cpp",
+        "tier1/snappy-sinksource.cpp",
+        "tier1/snappy-stubs-internal.cpp",
+        "tier1/snappy.cpp",
+        "tier1/sparsematrix.cpp",
+        "tier1/splitstring.cpp",
+        "tier1/stringpool.cpp",
+        "tier1/strtools.cpp",
+        "tier1/strtools_unicode.cpp",
+        "tier1/tier1.cpp",
+        "tier1/tokenreader.cpp",
+        "tier1/undiff.cpp",
+        "tier1/uniqueid.cpp",
+        "tier1/utlbinaryblock.cpp",
+        "tier1/utlbuffer.cpp",
+        "tier1/utlbufferutil.cpp",
+        "tier1/utlstring.cpp",
+        "tier1/utlsymbol.cpp",
+    ] + select({
+        "@platforms//os:windows": ["tier1/processor_detect.cpp"],
+        "//conditions:default": ["tier1/processor_detect_linux.cpp"],
+    }),
+    # Private headers (snappy-internal.h and friends) that these sources
+    # include unqualified; ConfigureLibrary() puts the library's own directory
+    # on its include path. The lzma headers are reached by a relative path
+    # (`../utils/lzma/C/7zTypes.h`) so they need no include root, only to be
+    # present as declared inputs.
+    hdrs = glob(
+        [
+            "tier1/*.h",
+            "utils/lzma/C/*.h",
+        ],
+        allow_empty = True,
+    ),
+    copts = _SDK_LIB_COPTS,
+    includes = ["tier1"],
+    deps = [":hl2sdk_headers"],
+)
+
+cc_library(
+    name = "mathlib",
+    srcs = [
+        "mathlib/3dnow.cpp",
+        "mathlib/almostequal.cpp",
+        "mathlib/anorms.cpp",
+        "mathlib/bumpvects.cpp",
+        "mathlib/color_conversion.cpp",
+        "mathlib/halton.cpp",
+        "mathlib/IceKey.cpp",
+        "mathlib/imagequant.cpp",
+        "mathlib/lightdesc.cpp",
+        "mathlib/mathlib_base.cpp",
+        "mathlib/polyhedron.cpp",
+        "mathlib/powsse.cpp",
+        "mathlib/quantize.cpp",
+        "mathlib/randsse.cpp",
+        "mathlib/simdvectormatrix.cpp",
+        "mathlib/sparse_convolution_noise.cpp",
+        "mathlib/spherical.cpp",
+        "mathlib/sse.cpp",
+        "mathlib/sseconst.cpp",
+        "mathlib/ssenoise.cpp",
+        "mathlib/vector.cpp",
+        "mathlib/vmatrix.cpp",
+    ],
+    hdrs = glob(["mathlib/*.h"], allow_empty = True),
+    copts = _SDK_LIB_COPTS,
+    includes = ["mathlib"],
+    deps = [":hl2sdk_headers"],
+)
+
+# The SDK headers an extension compiles against.
+#
+# `hdrs` is a broad glob rather than an enumerated list: the SDK's headers
+# include each other densely across public/, common/, and game/shared/, and
+# upstream simply puts the directories on the include path. Enumerating would be
+# a maintenance burden with no benefit, since the tree is pinned.
+cc_library(
+    name = "hl2sdk_headers",
+    hdrs = glob(
+        [
+            "common/**/*.h",
+            "game/shared/**/*.h",
+            "game/shared/**/*.inc",
+            "public/**/*.h",
+            "public/**/*.H",
+            "public/**/*.inl",
+        ],
+        allow_empty = False,
+    ),
+    defines = [
+        # The engine this branch is. Headers switch on it against SE_* values.
+        "SOURCE_ENGINE=%{source_engine_code}",
+        # Server-side build, and Telemetry (a Valve profiler) disabled -- both
+        # from configureCxx().
+        "GAME_DLL",
+        "RAD_TELEMETRY_DISABLED",
+    ] + _BRANCH_DEFINES + %{se_defines} + select({
+        # COMPILER_MSVC32 vs COMPILER_MSVC64 is load-bearing, not cosmetic:
+        # tier0/threadtools.h emits `__asm pause` for the 32-bit case and
+        # `_mm_pause()` for the 64-bit one, and the wrong choice is a compile
+        # error rather than a silent mismatch.
+        ":windows_x86_64": [
+            "COMPILER_MSVC",
+            "COMPILER_MSVC64",
+            "WIN32",
+            "WIN64",
+        ],
+        "@platforms//os:windows": [
+            "COMPILER_MSVC",
+            "COMPILER_MSVC32",
+            "WIN32",
+        ],
+        "//conditions:default": [
+            "COMPILER_GCC",
+            "_LINUX",
+            "LINUX",
+            "POSIX",
+            "GNUC",
+        ] + _POSIX_ONLY_DEFINES,
+    }) + select({
+        # configureCxx() adds these for any 64-bit target.
+        "@platforms//cpu:x86_64": [
+            "X64BITS",
+            "PLATFORM_64BITS",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = _INCLUDE_PATHS,
+    linkopts = select({
+        "@platforms//os:windows": [
+            # MSVC 2015+ needs this for the SDK's use of the pre-UCRT stdio
+            # symbols; configureCxx() adds it for cxx.version >= 1900.
+            "legacy_stdio_definitions.lib",
+        ],
+        "//conditions:default": ["-lm"],
+    }),
+    deps = [
+        ":tier0_import",
+        ":vstdlib_import",
+    ],
+)
+
+# The server-side game headers (variant_t.h, baseentity.h, ...).
+#
+# Deliberately not folded into :hl2sdk_headers. The manifest's include path list
+# stops at public/game/server, and upstream adds game/shared + game/server only
+# for the extensions that reach into entity internals -- sdktools is the one
+# that does. Keeping it separate means an extension that does not need engine
+# entity headers does not get several thousand of them on its include path.
+cc_library(
+    name = "hl2sdk_game_server",
+    hdrs = glob(
+        [
+            "game/server/**/*.h",
+            "game/server/**/*.inl",
+        ],
+        allow_empty = True,
+    ),
+    includes = [
+        "game/server",
+        "game/shared",
+    ],
+    deps = [":hl2sdk_headers"],
+)
+
+# Everything needed to compile *and link* against the SDK: the headers plus the
+# support libraries whose symbols they declare.
+#
+# Kept separate from :hl2sdk_headers so that target stays what its name says,
+# and so a consumer that only needs to compile (a header-only check, a test)
+# does not pay for building tier1 and mathlib.
+cc_library(
+    name = "hl2sdk_libs",
+    deps = [
+        ":hl2sdk_headers",
+        ":mathlib",
+        ":tier1",
+    ],
+)
+
+# The full set an HL2 extension compiles against: the SDK plus SourceHook and
+# the Metamod interfaces. A consumer's cc_library depends on this directly
+# (there is no `engine` parameter on `sourcemod_extension` -- see README.md).
+cc_library(
+    name = "hl2sdk",
+    deps = [
+        ":hl2sdk_libs",
+        "@metamod_source//:metamod_headers",
+    ],
+)

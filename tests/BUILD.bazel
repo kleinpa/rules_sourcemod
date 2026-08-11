@@ -1,0 +1,137 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("//:defs.bzl", "sourcemod_extension", "sourcemod_plugin")
+load("//sourcemod:plugins.bzl", "ALL_PLUGINS", "plugin_label")
+load(
+    ":package_layout_test.bzl",
+    "extension_layout_test",
+    "extension_linux_suffix_test",
+    "extension_windows_suffix_test",
+    "package_info_test",
+    "plugin_layout_test",
+)
+
+package(default_visibility = ["//visibility:private"])
+
+# --- Fixtures --------------------------------------------------------------
+#
+# The tests below assert on providers, but reaching those providers builds the
+# targets: the extension is compiled and linked, and the plugin is run through
+# spcomp. Tagged manual so they are only built as test dependencies.
+
+sourcemod_extension(
+    name = "test_ext",
+    srcs = ["fixtures/test_ext.cpp"],
+    hdrs = ["fixtures/smsdk_config.h"],
+    includes = ["fixtures"],
+    tags = ["manual"],
+)
+
+sourcemod_plugin(
+    name = "test_plugin",
+    src = "fixtures/test_plugin.sp",
+    tags = ["manual"],
+)
+
+# --- Tests -----------------------------------------------------------------
+
+extension_layout_test(
+    name = "extension_installs_into_extensions_dir_test",
+    target_under_test = ":test_ext",
+)
+
+# These pin the platform explicitly, so they need a C++ toolchain registered for
+# that platform -- not merely installed. Tagged manual so the default `//...`
+# run stays green on hosts that only have their native toolchain.
+#
+# The Windows one resolves against Bazel's MSVC autoconfiguration on a Windows
+# host, and CI runs it there. The Linux one has no toolchain to resolve against
+# anywhere yet: Bazel's Unix autoconfiguration emits a toolchain for the host
+# CPU only, so installing g++-multilib does not make //platforms:linux_x86_32
+# resolvable. It needs a registered 32-bit toolchain first.
+extension_linux_suffix_test(
+    name = "extension_uses_so_suffix_on_linux_test",
+    expected_path = "addons/sourcemod/extensions/test_ext.ext.so",
+    tags = ["manual"],
+    target_under_test = ":test_ext",
+)
+
+extension_windows_suffix_test(
+    name = "extension_uses_dll_suffix_on_windows_test",
+    expected_path = "addons/sourcemod/extensions/test_ext.ext.dll",
+    tags = ["manual"],
+    target_under_test = ":test_ext",
+)
+
+plugin_layout_test(
+    name = "plugin_installs_into_plugins_dir_test",
+    target_under_test = ":test_plugin",
+)
+
+package_info_test(
+    name = "extension_reports_package_info_test",
+    expected_dests = [
+        "addons/sourcemod/extensions",
+        "addons/sourcemod/extensions/x64",
+    ],
+    target_under_test = ":test_ext",
+)
+
+package_info_test(
+    name = "plugin_reports_package_info_test",
+    expected_dests = ["addons/sourcemod/plugins"],
+    target_under_test = ":test_plugin",
+)
+
+# Compiles every built-in SourceMod plugin (sourcemod/plugins.bzl) through
+# spcomp. Needs only @sourcemod_sdk -- already fetched for test_plugin above,
+# no HL2SDK/Metamod involved -- so unlike sourcemod_css_builds_test below this
+# runs on every `bazel test //...`.
+build_test(
+    name = "builtin_plugins_build_test",
+    targets = [plugin_label(name) for name in ALL_PLUGINS],
+)
+
+# Exercises the //sourcemod:sourcemod_css preset end to end. Needs
+# @hl2sdk_css and @metamod_source (requested in MODULE.bazel for that preset)
+# -- a multi-hundred-megabyte fetch, followed by compiling the entire
+# HL2SDK/Metamod/SourceMod tree from source -- so, like the cross-platform
+# tests above, it is tagged manual rather than run on every `bazel test //...`.
+build_test(
+    name = "sourcemod_css_builds_test",
+    tags = ["manual"],
+    targets = ["//sourcemod:sourcemod_css"],
+)
+
+test_suite(
+    name = "tests",
+    tests = [
+        ":builtin_plugins_build_test",
+        ":extension_installs_into_extensions_dir_test",
+        ":extension_reports_package_info_test",
+        ":plugin_installs_into_plugins_dir_test",
+        ":plugin_reports_package_info_test",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Requires a C++ toolchain for each pinned platform to be registered.
+test_suite(
+    name = "cross_platform_tests",
+    tags = ["manual"],
+    tests = [
+        ":extension_uses_dll_suffix_on_windows_test",
+        ":extension_uses_so_suffix_on_linux_test",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Requires network access to fetch @hl2sdk_css/@metamod_source and enough
+# time/CPU to compile them from source.
+test_suite(
+    name = "game_server_tests",
+    tags = ["manual"],
+    tests = [
+        ":sourcemod_css_builds_test",
+    ],
+    visibility = ["//visibility:public"],
+)
