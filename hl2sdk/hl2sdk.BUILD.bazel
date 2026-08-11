@@ -1,0 +1,370 @@
+"""Build overlay for one fetched HL2SDK engine branch.
+
+This is a direct translation of `SdkHelpers.configureCxx()` in
+alliedmodders/hl2sdk-manifests, which is what upstream AMBuild runs: the include
+paths, the SOURCE_ENGINE/GAME_DLL defines, the per-compiler warning suppressions,
+and the tier0/vstdlib link.
+
+Substituted by //hl2sdk:repositories.bzl from the branch's entry in its
+HL2SDK_BRANCHES table, so every engine branch shares this one file.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])  # SDK license; redistribution of engine binaries is limited.
+
+_INCLUDE_PATHS = %{include_paths}
+
+_BRANCH_DEFINES = %{defines}
+
+_POSIX_ONLY_DEFINES = %{posix_defines}
+
+# Directories holding the prebuilt tier0/vstdlib binaries for this branch, one
+# per (os, arch). See the comment above the cc_import targets below.
+
+# tier0 and vstdlib are the one place this build consumes prebuilt binaries.
+# Valve does not ship their sources -- the tree carries a tier0_exclude.vpc and
+# no tier0/*.cpp -- so there is nothing to compile. Everything else in the SDK
+# that this needs is headers.
+#
+# The Linux .so files are the `_srv` (dedicated server) variants, matching what
+# the manifest names for a server-side extension.
+# On Windows only the import library is in the SDK -- tier0.dll/vstdlib.dll ship
+# with the game, so `system_provided` says the runtime DLL comes from elsewhere.
+# On Linux the SDK carries the .so itself and it is linked directly.
+#
+# Both are per-architecture, and the directory holding them is *not* the same
+# across branches -- css/tf2 use lib/public/linux(64), but l4d2 uses lib/linux
+# (no "public"), and sdk2013 uses lib/public/linux32 (not "linux"). The four
+# directories are branch data (see the lib_* fields in HL2SDK_BRANCHES),
+# substituted in rather than hardcoded, so each branch's overlay matches its
+# own manifest instead of assuming every branch shares css's layout.
+#
+# srcds is usually 32-bit, but newer engine branches are 64-bit, so the arch
+# also comes from the target platform rather than being assumed. A branch with
+# no 64-bit SDK at all (l4d2, sdk2013) substitutes its 32-bit directory for
+# both -- see _hl2sdk_impl's fallback -- since nothing selects the 64-bit
+# import for those branches; there is no 64-bit platform to build them for.
+cc_import(
+    name = "tier0_windows_x86_32",
+    interface_library = "%{lib_windows_x86_32}/tier0.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "tier0_windows_x86_64",
+    interface_library = "%{lib_windows_x86_64}/tier0.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "tier0_linux_x86_32",
+    shared_library = "%{lib_linux_x86_32}/libtier0_srv.so",
+)
+
+cc_import(
+    name = "tier0_linux_x86_64",
+    shared_library = "%{lib_linux_x86_64}/libtier0_srv.so",
+)
+
+cc_import(
+    name = "vstdlib_windows_x86_32",
+    interface_library = "%{lib_windows_x86_32}/vstdlib.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "vstdlib_windows_x86_64",
+    interface_library = "%{lib_windows_x86_64}/vstdlib.lib",
+    system_provided = True,
+)
+
+cc_import(
+    name = "vstdlib_linux_x86_32",
+    shared_library = "%{lib_linux_x86_32}/libvstdlib_srv.so",
+)
+
+cc_import(
+    name = "vstdlib_linux_x86_64",
+    shared_library = "%{lib_linux_x86_64}/libvstdlib_srv.so",
+)
+
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:linux",
+    ],
+)
+
+alias(
+    name = "tier0_import",
+    actual = select({
+        ":linux_x86_32": ":tier0_linux_x86_32",
+        ":windows_x86_32": ":tier0_windows_x86_32",
+        ":windows_x86_64": ":tier0_windows_x86_64",
+        "//conditions:default": ":tier0_linux_x86_64",
+    }),
+)
+
+alias(
+    name = "vstdlib_import",
+    actual = select({
+        ":linux_x86_32": ":vstdlib_linux_x86_32",
+        ":windows_x86_32": ":vstdlib_windows_x86_32",
+        ":windows_x86_64": ":vstdlib_windows_x86_64",
+        "//conditions:default": ":vstdlib_linux_x86_64",
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# tier1 and mathlib — compiled from the SDK's own sources.
+#
+# These carry the implementations of ConVar, ConCommand, KeyValues, CUtlBuffer
+# and the vector math, which every SDK consumer references and neither tier0
+# nor vstdlib provides. Without them a .so links cleanly and then fails at
+# dlopen with `undefined symbol: _ZN6ConVarD1Ev`.
+#
+# Built rather than taken from the prebuilt lib/public/<arch>/tier1.a that also
+# ships in the tree: upstream's SdkHelpers.ambuild does the same, compiling
+# each through sdk/<name>/AMBuilder, and the sources are right here. The
+# prebuilts are additionally built against an unknown toolchain, which is the
+# thing the pinned sysroot exists to avoid.
+#
+# Source lists mirror those AMBuilder files.
+# ---------------------------------------------------------------------------
+
+_SDK_LIB_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-"],
+    "//conditions:default": [
+        "-fPIC",
+        "-fno-strict-aliasing",
+        # Specific to this tree; the rest of the suppressions are the shared
+        # upstream set.
+        "-Wno-write-strings",
+    ],
+}) + UPSTREAM_WARNING_COPTS
+
+cc_library(
+    name = "tier1",
+    # upstream's own tier1/AMBuilder is just `project.sources = ` every .cpp
+    # in this directory (plus the platform-selected processor_detect variant),
+    # and that file *set* differs by branch: l4d2's tier1/ is missing 18 of
+    # the files css/tf2/sdk2013 have (fileio.cpp, ilocalize.cpp, snappy*.cpp,
+    # ...), an older SDK snapshot never having grown them. A hardcoded list
+    # tuned to one branch's tree fails a "missing input file" for any branch
+    # whose tree doesn't match it -- glob() tracks whatever's actually there.
+    srcs = glob(
+        ["tier1/*.cpp"],
+        exclude = [
+            "tier1/processor_detect.cpp",
+            "tier1/processor_detect_linux.cpp",
+            # ep1 (and any other branch predating AMBuild) ships a separate
+            # tier1_xbox.vcproj for this precisely because it isn't part of
+            # the regular tier1 sources; it #includes
+            # common/xbox/xboxstubs.h, reachable only through the "common"
+            # include path newer branches carry but ep1's manifest does not
+            # (see the "ep1" entry in repositories.bzl). Excluded on every
+            # branch, not just ep1: a branch where it compiled anyway was
+            # doing so by accident, not because tier1.lib is supposed to
+            # contain it.
+            "tier1/xboxstubs.cpp",
+        ],
+        allow_empty = True,
+    ) + select({
+        "@platforms//os:windows": ["tier1/processor_detect.cpp"],
+        "//conditions:default": ["tier1/processor_detect_linux.cpp"],
+    }),
+    # Private headers (snappy-internal.h and friends) that these sources
+    # include unqualified; ConfigureLibrary() puts the library's own directory
+    # on its include path. The lzma headers are reached by a relative path
+    # (`../utils/lzma/C/7zTypes.h`) so they need no include root, only to be
+    # present as declared inputs.
+    hdrs = glob(
+        [
+            "tier1/*.h",
+            "utils/lzma/C/*.h",
+        ],
+        allow_empty = True,
+    ),
+    copts = _SDK_LIB_COPTS,
+    includes = ["tier1"],
+    deps = [":hl2sdk_headers"],
+)
+
+cc_library(
+    name = "mathlib",
+    # Same reasoning as tier1's glob above: upstream's mathlib/AMBuilder is
+    # every .cpp in this directory, and the set isn't identical across
+    # branches -- l4d2's mathlib/ has no 3dnow.cpp, almostequal.cpp, or
+    # spherical.cpp.
+    srcs = glob(["mathlib/*.cpp"], allow_empty = True),
+    hdrs = glob(["mathlib/*.h"], allow_empty = True),
+    copts = _SDK_LIB_COPTS,
+    includes = ["mathlib"],
+    deps = [":hl2sdk_headers"],
+)
+
+# The SDK headers an extension compiles against.
+#
+# `hdrs` is a broad glob rather than an enumerated list: the SDK's headers
+# include each other densely across public/, common/, and game/shared/, and
+# upstream simply puts the directories on the include path. Enumerating would be
+# a maintenance burden with no benefit, since the tree is pinned.
+#
+# allow_empty = True: Bazel checks each pattern individually, and not every
+# branch's tree has a file of every extension listed here -- sdk2013, for
+# one, has no game/shared/**/*.inc. css and tf2 happen to have at least one
+# match for each pattern, which is why this was never a problem before there
+# was a second branch to build against.
+cc_library(
+    name = "hl2sdk_headers",
+    hdrs = glob(
+        [
+            "common/**/*.h",
+            "game/shared/**/*.h",
+            "game/shared/**/*.inc",
+            # ep1's own tree, not a typo of game/shared/ above: ep1 predates
+            # the game/shared convention (see the "ep1" entry in
+            # repositories.bzl), and its include_paths entry of the same
+            # name only adds the *directory* to the include path -- headers
+            # under it (e.g. ehandle.h, which extensions/sdkhooks reaches
+            # through <ehandle.h>) still need to be in this glob to be
+            # visible at all. Harmless no-op for every other branch, none
+            # of which has a top-level game_shared/.
+            "game_shared/**/*.h",
+            "game_shared/**/*.inc",
+            "public/**/*.h",
+            "public/**/*.H",
+            "public/**/*.inl",
+        ],
+        allow_empty = True,
+    ),
+    defines = [
+        # The engine this branch is. Headers switch on it against SE_* values.
+        "SOURCE_ENGINE=%{source_engine_code}",
+        # Server-side build, and Telemetry (a Valve profiler) disabled -- both
+        # from configureCxx().
+        "GAME_DLL",
+        "RAD_TELEMETRY_DISABLED",
+    ] + _BRANCH_DEFINES + %{se_defines} + select({
+        # COMPILER_MSVC32 vs COMPILER_MSVC64 is load-bearing, not cosmetic:
+        # tier0/threadtools.h emits `__asm pause` for the 32-bit case and
+        # `_mm_pause()` for the 64-bit one, and the wrong choice is a compile
+        # error rather than a silent mismatch.
+        ":windows_x86_64": [
+            "COMPILER_MSVC",
+            "COMPILER_MSVC64",
+            "WIN32",
+            "WIN64",
+        ],
+        "@platforms//os:windows": [
+            "COMPILER_MSVC",
+            "COMPILER_MSVC32",
+            "WIN32",
+        ],
+        "//conditions:default": [
+            "COMPILER_GCC",
+            "_LINUX",
+            "LINUX",
+            "POSIX",
+            "GNUC",
+        ] + _POSIX_ONLY_DEFINES,
+    }) + select({
+        # configureCxx() adds these for any 64-bit target.
+        "@platforms//cpu:x86_64": [
+            "X64BITS",
+            "PLATFORM_64BITS",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = _INCLUDE_PATHS,
+    linkopts = select({
+        "@platforms//os:windows": [
+            # MSVC 2015+ needs this for the SDK's use of the pre-UCRT stdio
+            # symbols; configureCxx() adds it for cxx.version >= 1900.
+            "legacy_stdio_definitions.lib",
+        ],
+        "//conditions:default": ["-lm"],
+    }),
+    deps = [
+        ":tier0_import",
+        ":vstdlib_import",
+    ],
+)
+
+# The server-side game headers (variant_t.h, baseentity.h, ...).
+#
+# Deliberately not folded into :hl2sdk_headers. The manifest's include path list
+# stops at public/game/server, and upstream adds game/shared + game/server only
+# for the extensions that reach into entity internals -- sdktools is the one
+# that does. Keeping it separate means an extension that does not need engine
+# entity headers does not get several thousand of them on its include path.
+#
+# ep1's tree predates the game/server convention: its equivalent is a
+# top-level dlls/ (variant_t.h lives there, not under public/) -- see the
+# "ep1" entry in repositories.bzl. Harmless no-op glob/include for every
+# other branch, none of which has a top-level dlls/.
+cc_library(
+    name = "hl2sdk_game_server",
+    hdrs = glob(
+        [
+            "game/server/**/*.h",
+            "game/server/**/*.inl",
+            "dlls/**/*.h",
+            "dlls/**/*.inl",
+        ],
+        allow_empty = True,
+    ),
+    includes = [
+        "game/server",
+        "game/shared",
+        "dlls",
+    ],
+    deps = [":hl2sdk_headers"],
+)
+
+# Everything needed to compile *and link* against the SDK: the headers plus the
+# support libraries whose symbols they declare.
+#
+# Kept separate from :hl2sdk_headers so that target stays what its name says,
+# and so a consumer that only needs to compile (a header-only check, a test)
+# does not pay for building tier1 and mathlib.
+cc_library(
+    name = "hl2sdk_libs",
+    deps = [
+        ":hl2sdk_headers",
+        ":mathlib",
+        ":tier1",
+    ],
+)
+
+# The full set an HL2 extension compiles against: the SDK plus SourceHook and
+# the Metamod interfaces. A consumer's cc_library depends on this directly
+# (there is no `engine` parameter on `sourcemod_extension` -- see README.md).
+cc_library(
+    name = "hl2sdk",
+    deps = [
+        ":hl2sdk_libs",
+        "@metamod_source//:metamod_headers",
+    ],
+)

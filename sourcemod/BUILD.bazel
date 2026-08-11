@@ -1,0 +1,69 @@
+load(":server.bzl", "sourcemod_game_server")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["sdk.BUILD.bazel"])
+
+# One preset per branch in HL2SDK_BRANCHES (//hl2sdk:repositories.bzl) -- a
+# closed set, so this enumeration is also the complete list of game servers
+# this module can build; sourcemod_game_server itself is private (see
+# server.bzl) rather than exposed for a consumer to call with some other
+# branch. A consumer depends on one of these directly, adding whichever
+# bundled plugins it wants from @sourcemod_sdk//:plugin_<name> alongside it
+# (none are included here -- see sourcemod_game_server's docstring):
+#
+#     pkg_tar(
+#         name = "sourcemod_layer",
+#         srcs = [
+#             "@rules_sourcemod//sourcemod:sourcemod_cstrike",
+#             "@sourcemod_sdk//:plugin_basecommands",
+#         ],
+#         package_dir = "/opt/game/cstrike",
+#     )
+#
+# without ever naming @hl2sdk_css or @metamod_source. package_dir above is
+# the caller's own choice, not baked into the preset -- which is also why
+# sourcemod_sdk2013 needs no per-mod variant: every SDK2013 mod wants the
+# same binaries, and installs them at whatever path package_dir says.
+#
+# Each is tagged manual so `bazel build //...` in this repo doesn't fetch and
+# compile the whole HL2SDK/Metamod/SourceMod tree, times five branches, on
+# every run; //tests:game_server_tests builds them explicitly.
+#
+# Named for the game, which for css/tf2/l4d2 is a straight 1:1 with the
+# branch. sourcemod_sdk2013 is the odd one out -- sdk2013 is a generic
+# engine base shared by many independent mods (see the comment on that entry
+# in //hl2sdk:repositories.bzl), not one game's branch, so this preset is
+# named after the branch rather than any one of them.
+sourcemod_game_server(
+    name = "sourcemod_cstrike",
+    branch = "css",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_tf2",
+    branch = "tf2",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_l4d2",
+    branch = "l4d2",
+    tags = ["manual"],
+)
+
+sourcemod_game_server(
+    name = "sourcemod_sdk2013",
+    branch = "sdk2013",
+    tags = ["manual"],
+)
+
+# The original (pre-Orange Box) Source engine, e.g. The Hidden: Source --
+# see the "ep1" entry in //hl2sdk:repositories.bzl for the branch's own
+# caveats (32-bit only, no Linux wiring yet). Named after the branch, same
+# as sourcemod_sdk2013, since ep1 is shared by several independent 2004-2006
+# mods rather than being one game's own branch.
+sourcemod_game_server(
+    name = "sourcemod_ep1",
+    branch = "ep1",
+    tags = ["manual"],
+)
