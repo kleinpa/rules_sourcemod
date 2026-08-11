@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The three target configurations this repo supports and can resolve a
+  # toolchain for. They are independent and run concurrently; fail-fast is off
+  # so a break on one platform still reports the other two rather than
+  # cancelling them mid-run.
+  #
+  # linux_x86_32 is deliberately absent: Bazel's Unix autoconfiguration emits a
+  # toolchain for the host CPU only, so //platforms:linux_x86_32 has nothing to
+  # resolve against even with g++-multilib installed (see tests/BUILD.bazel).
+  # Windows has no such gap -- MODULE.bazel registers the 32-bit MSVC toolchain
+  # the autoconfiguration generates but does not itself register.
+  #
+  # `mode` is build vs test rather than a stylistic choice. Running a test
+  # target requires the *target* platform to also be a registered execution
+  # platform, which holds for the two x86_64 jobs (they target the host) but
+  # not for the x86_32 cross-compile -- there, even `bazel build //...` fails
+  # in analysis on the test targets it expands to. So the 32-bit job builds
+  # the artifacts, which is what that configuration is actually for, and the
+  # 64-bit jobs carry the test assertions.
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            platform: //platforms:linux_x86_64
+            cache: linux-x64
+            mode: test
+            targets: //...
+          - name: Windows x86_64
+            os: windows-latest
+            platform: //platforms:windows_x86_64
+            cache: windows-x64
+            mode: test
+            targets: //...
+          - name: Windows x86_32
+            os: windows-latest
+            platform: //platforms:windows_x86_32
+            cache: windows-x86
+            mode: build
+            targets: //sourcemod:all //spcomp:all //extension:all
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ matrix.cache }}
+          repository-cache: true
+
+      # The default suite: provider/layout assertions plus compiling every
+      # built-in plugin through spcomp. Needs only @sourcemod_sdk, no HL2SDK
+      # fetch. On the 32-bit job this is a build of the same wildcard minus the
+      # test targets, for the execution-platform reason above.
+      - name: ${{ matrix.mode == 'test' && 'Test' || 'Build' }}
+        run: >-
+          bazel ${{ matrix.mode }} --platforms=${{ matrix.platform }}
+          ${{ matrix.targets }}
+
+      # Tagged manual (multi-hundred-MB HL2SDK fetch per branch), so named
+      # explicitly rather than picked up by the wildcard above.
+      #
+      # cstrike/tf2 only: l4d2 and sdk2013 are 32-bit only (their vendored
+      # tier1 carries 32-bit inline asm) and nothing currently stops them being
+      # attempted on a 64-bit platform -- the presets carry `tags = ["manual"]`
+      # but no `target_compatible_with`, so naming //tests:game_server_tests on
+      # a 64-bit platform fails inside the SDK rather than skipping.
+      - name: Game server presets
+        if: matrix.mode == 'test'
+        run: >-
+          bazel test --platforms=${{ matrix.platform }}
+          //tests:sourcemod_cstrike_builds_test //tests:sourcemod_tf2_builds_test
+
+      # All four presets are valid here, including the two 32-bit-only ones.
+      - name: Game server presets (all four)
+        if: matrix.mode == 'build'
+        run: >-
+          bazel build --platforms=${{ matrix.platform }}
+          //sourcemod:sourcemod_cstrike //sourcemod:sourcemod_tf2
+          //sourcemod:sourcemod_l4d2 //sourcemod:sourcemod_sdk2013
+
+      # Asserts the artifact filename SourceMod's loader actually looks for
+      # (.dll, not .so). Pins //platforms:windows_x86_32 internally via a
+      # transition, so it runs from a default-platform invocation on a Windows
+      # host and needs no --platforms of its own. The linux_x86_32 counterpart
+      # stays manual for the toolchain reason above.
+      - name: Windows suffix test
+        if: runner.os == 'Windows' && matrix.mode == 'test'
+        run: bazel test //tests:extension_uses_dll_suffix_on_windows_test

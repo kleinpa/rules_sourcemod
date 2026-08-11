@@ -1,0 +1,4 @@
+# Bazel convenience symlinks and local output. Unanchored: the nested modules
+# under tests/ are separate workspaces and generate their own symlinks.
+bazel-*
+build-*

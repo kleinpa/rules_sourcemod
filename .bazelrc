@@ -1,0 +1,5 @@
+# Cap local resource usage. This repo compiles/links multiple full
+# HL2SDK + Metamod + SourceMod trees, and the default --jobs=<num cores>
+# spawns enough concurrent memory-heavy link steps to fill RAM+swap on a
+# 22GB machine.
+build --jobs=4

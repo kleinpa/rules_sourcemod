@@ -1,0 +1,765 @@
+"""Build overlay for the fetched SourceMod SDK sources.
+
+The SDK is consumed as source and compiled with the consumer's own C++
+toolchain. The include roots below mirror `ConfigureForExtension()` in the
+AMBuild template this replaces.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_sourcemod//sourcemod:defines.bzl", "SOURCEMOD_PLATFORM_DEFINES")
+load(
+    "@rules_sourcemod//sourcemod:plugins.bzl",
+    "ACTIVE_PLUGINS",
+    "DISABLED_PLUGINS",
+    "PLUGINS_WITH_PARTS",
+)
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+load("@rules_sourcemod//spcomp:plugin.bzl", "sourcemod_plugin")
+load(
+    "@rules_sourcemod//spcomp:sources.bzl",
+    "SPCOMP_AMTL_SRCS",
+    "SPCOMP_COMPILER_SRCS",
+    "SPCOMP_LIBSMX_SRCS",
+    "SPCOMP_VM_SRCS",
+    "SPCOMP_VM_SRCS_X86",
+    "SPCOMP_VM_SRCS_X86_64",
+)
+load("@rules_sourcemod//spcomp:version.bzl", "sourcemod_version_header")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])  # GPL-3.0 with linking exception for extensions.
+
+exports_files(["public/smsdk_ext.cpp"])
+
+# AMTL — AlliedModders template library. Header-only.
+# Two include roots: `amtl/` prefixed and unprefixed, matching upstream, which
+# passes both `public/amtl` and `public/amtl/amtl`.
+cc_library(
+    name = "amtl",
+    hdrs = glob(
+        [
+            "public/amtl/amtl/**/*.h",
+            "public/amtl/**/*.h",
+        ],
+        allow_empty = False,
+    ),
+    includes = [
+        "public/amtl",
+        "public/amtl/amtl",
+    ],
+)
+
+# SourcePawn VM API headers (sp_vm_api.h, sp_vm_types.h, ...). Header-only; the
+# VM itself lives in the SourceMod runtime, not in the extension.
+cc_library(
+    name = "sourcepawn_headers",
+    hdrs = glob(
+        ["sourcepawn/include/**/*.h"],
+        allow_empty = False,
+    ),
+    includes = ["sourcepawn/include"],
+    deps = [":amtl"],
+)
+
+# The public SourceMod interface headers an extension talks to
+# (IShareSys, IGameHelpers, IPlayerHelpers, IExtensionSys, ...).
+cc_library(
+    name = "sourcemod_headers",
+    hdrs = glob(
+        [
+            "public/*.h",
+            "public/extensions/*.h",
+        ],
+        allow_empty = False,
+    ),
+    defines = SOURCEMOD_PLATFORM_DEFINES,
+    includes = [
+        "public",
+        "public/extensions",
+    ],
+    deps = [
+        ":amtl",
+        ":sourcepawn_headers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# SourcePawn compiler (spcomp), built from source.
+#
+# Everything below produces the .sp -> .smx compiler. It is a build tool, so it
+# is always built for the execution platform; see spcomp/sources.bzl for why
+# that also determines which VM backend is compiled.
+# ---------------------------------------------------------------------------
+
+# zlib, vendored in the SourcePawn tree. spcomp uses it to compress the code
+# section of the .smx it emits.
+cc_library(
+    name = "zlib",
+    srcs = glob(
+        ["sourcepawn/third_party/zlib/*.c"],
+        allow_empty = False,
+    ),
+    hdrs = glob(
+        ["sourcepawn/third_party/zlib/*.h"],
+        allow_empty = False,
+    ),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-Wno-implicit-function-declaration"],
+    }),
+    # Both spellings are needed: zlib's own sources use `#include "zutil.h"`,
+    # while the compiler reaches for `<zlib/zlib.h>`.
+    includes = [
+        "sourcepawn/third_party",
+        "sourcepawn/third_party/zlib",
+    ],
+)
+
+# `sourcemod_version.h`, which the compiler includes for its version banner.
+# The version is read from the fetched tree's product.version at repository
+# setup time; the header is written from Starlark, so this needs neither Python
+# nor a shell (see spcomp/version.bzl).
+sourcemod_version_header(
+    name = "sourcemod_version_h",
+    version = "%{product_version}",
+)
+
+cc_library(
+    name = "sourcemod_version_header",
+    hdrs = [":sourcemod_version_h"],
+    includes = ["generated"],
+)
+
+# Headers shared between the compiler and the VM.
+cc_library(
+    name = "sourcepawn_internal_headers",
+    hdrs = glob(
+        [
+            "sourcepawn/compiler/**/*.h",
+            "sourcepawn/compiler/**/*-inl.h",
+            "sourcepawn/libsmx/*.h",
+            "sourcepawn/shared/*.h",
+            "sourcepawn/vm/**/*.h",
+        ],
+        allow_empty = False,
+    ),
+    includes = [
+        "sourcepawn",
+        "sourcepawn/vm",
+    ],
+    deps = [
+        ":amtl",
+        ":sourcemod_version_header",
+        ":sourcepawn_headers",
+    ],
+)
+
+_SPCOMP_COPTS = select({
+    "@platforms//os:windows": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+}) + UPSTREAM_WARNING_COPTS
+
+# WIN32 is not predefined by MSVC (which spells it _WIN32); upstream's
+# configure_windows adds it to every target. dll_exports.h gates EXPORTFUNC on
+# it, so without it the VM's exported GetSourcePawnFactory silently loses its
+# declaration and the file fails to parse.
+_SPCOMP_DEFINES = select({
+    "@platforms//os:linux": ["_GNU_SOURCE"],
+    "@platforms//os:macos": ["DARWIN"],
+    "@platforms//os:windows": ["WIN32", "_WINDOWS"],
+    "//conditions:default": [],
+})
+
+# The SourcePawn VM. Linked into spcomp because the assembler runs each freshly
+# built binary through the VM's verifier before writing it out, and into the
+# runtime shared library below, which is what the game server loads.
+#
+# alwayslink because that shared library's only translation unit of its own is
+# the export shim: everything else has to survive archive member selection on
+# the strength of being reachable from it, and the VM registers work from static
+# initializers that no symbol reference would pull in.
+cc_library(
+    name = "sourcepawn_vm",
+    srcs = SPCOMP_VM_SRCS + select({
+        "@platforms//cpu:x86_32": SPCOMP_VM_SRCS_X86,
+        "//conditions:default": SPCOMP_VM_SRCS_X86_64,
+    }),
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES + select({
+        # The JIT only exists in the 32-bit backend.
+        "@platforms//cpu:x86_32": ["SP_HAS_JIT"],
+        "//conditions:default": [],
+    }),
+    alwayslink = True,
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":zlib",
+    ],
+)
+
+# The SourcePawn runtime, as the shared library the server dlopens.
+#
+# SourceMod's core opens `addons/sourcemod/bin/x64/sourcepawn.vm.so` during
+# startup (SOURCEPAWN_DLL in core/sourcemod.cpp) and resolves
+# GetSourcePawnFactory out of it; without the file, core refuses to start and
+# MetaMod reports "Failed to load plugin addons/sourcemod/bin/sourcemod_mm",
+# which is indistinguishable from SourceMod not being installed at all.
+#
+# Same code as is linked into spcomp, plus dll_exports.cpp -- upstream's
+# vm/AMBuilder builds that file only into the shared module, since it carries
+# the exported factory function and the module's operator new/delete.
+cc_binary(
+    name = "sourcepawn_vm_shared",
+    srcs = ["sourcepawn/vm/dll_exports.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    linkopts = select({
+        "@platforms//os:windows": [],
+        # See spcomp below: the VM's thread support needs pthread named
+        # explicitly to keep linking against a pre-2.34 glibc working.
+        "//conditions:default": ["-lpthread"],
+    }),
+    linkshared = True,
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":sourcepawn_vm",
+    ],
+)
+
+# The compiler front end, .smx writer, and amtl's argument parser.
+cc_library(
+    name = "sourcepawn_compiler",
+    srcs = SPCOMP_COMPILER_SRCS + SPCOMP_LIBSMX_SRCS + SPCOMP_AMTL_SRCS,
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":sourcepawn_vm",
+        ":zlib",
+    ],
+)
+
+cc_binary(
+    name = "spcomp",
+    srcs = ["sourcepawn/compiler/driver.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    linkopts = select({
+        # driver.cpp posts window messages to notify an editor of build results.
+        "@platforms//os:windows": ["user32.lib"],
+        # The VM's thread support needs pthread. Explicit because glibc only
+        # folded libpthread into libc in 2.34: linking against an older sysroot
+        # (which is what keeps the output loadable on older targets) still needs
+        # it named, even though a modern host would resolve it from libc.
+        "//conditions:default": ["-lpthread"],
+    }),
+    deps = [
+        ":sourcepawn_compiler",
+        ":sourcepawn_internal_headers",
+    ],
+)
+
+# The SourcePawn standard library (`#include <sourcemod>` and friends), taken
+# from the same SourceMod source tree as everything else. Previously these came
+# from the prebuilt binary drop.
+filegroup(
+    name = "spcomp_stdlib_includes",
+    srcs = glob(
+        ["plugins/include/**/*.inc"],
+        allow_empty = False,
+    ),
+)
+
+# ===========================================================================
+# Server-side compilation support
+#
+# The targets below are consumed by the sourcemod_server() macro in
+# sourcemod/server.bzl, which is called from a game-server BUILD file where
+# both @hl2sdk_* and @metamod_source are visible.
+#
+# The split between here (header cc_libraries + source filegroups) and the
+# macro (cc_binary / pkg_files) is forced by cross-extension visibility:
+# @sourcemod_sdk cannot reference @hl2sdk_* by apparent name because the
+# sourcemod extension is independent of the hl2sdk extension.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Source filegroups — consumed as srcs in cc_library targets created by the
+# macro.  Keeping them here means glob() runs in @sourcemod_sdk context.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "loader_srcs",
+    srcs = ["loader/loader.cpp"],
+)
+
+filegroup(
+    name = "logic_srcs",
+    srcs = [
+        "core/logic/AdminCache.cpp",
+        "core/logic/ADTFactory.cpp",
+        "core/logic/BaseWorker.cpp",
+        "core/logic/CDataPack.cpp",
+        "core/logic/common_logic.cpp",
+        "core/logic/DatabaseConfBuilder.cpp",
+        "core/logic/Database.cpp",
+        "core/logic/DebugReporter.cpp",
+        "core/logic/ExtensionSys.cpp",
+        "core/logic/ForwardSys.cpp",
+        "core/logic/FrameIterator.cpp",
+        "core/logic/frame_tasks.cpp",
+        "core/logic/GameConfigs.cpp",
+        "core/logic/HandleSys.cpp",
+        "core/logic/LibrarySys.cpp",
+        "core/logic/Logger.cpp",
+        "core/logic/LumpManager.cpp",
+        "core/logic/MemoryUtils.cpp",
+        "core/logic/NativeOwner.cpp",
+        "core/logic/PhraseCollection.cpp",
+        "core/logic/PluginSys.cpp",
+        "core/logic/ProfileTools.cpp",
+        "core/logic/RootConsoleMenu.cpp",
+        "core/logic/ShareSys.cpp",
+        "core/logic/sm_crc32.cpp",
+        "core/logic/smn_admin.cpp",
+        "core/logic/smn_adt_array.cpp",
+        "core/logic/smn_adt_stack.cpp",
+        "core/logic/smn_adt_trie.cpp",
+        "core/logic/smn_banning.cpp",
+        "core/logic/smn_console.cpp",
+        "core/logic/smn_core.cpp",
+        "core/logic/smn_database.cpp",
+        "core/logic/smn_datapacks.cpp",
+        "core/logic/smn_entitylump.cpp",
+        "core/logic/smn_fakenatives.cpp",
+        "core/logic/smn_filesystem.cpp",
+        "core/logic/smn_float.cpp",
+        "core/logic/smn_functions.cpp",
+        "core/logic/smn_gameconfigs.cpp",
+        "core/logic/smn_halflife.cpp",
+        "core/logic/smn_handles.cpp",
+        "core/logic/smn_lang.cpp",
+        "core/logic/smn_maplists.cpp",
+        "core/logic/smn_menus.cpp",
+        "core/logic/smn_players.cpp",
+        "core/logic/smn_profiler.cpp",
+        "core/logic/smn_sorting.cpp",
+        "core/logic/smn_string.cpp",
+        "core/logic/smn_textparse.cpp",
+        "core/logic/smn_timers.cpp",
+        "core/logic/sm_trie.cpp",
+        "core/logic/sprintf.cpp",
+        "core/logic/stringutil.cpp",
+        "core/logic/TextParsers.cpp",
+        "core/logic/ThreadSupport.cpp",
+        "core/logic/Translator.cpp",
+    ] + select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["core/logic/PseudoAddrManager.cpp"],
+    }),
+)
+
+# CSS core: the 36-file common set + smn_bitbuffer.cpp + vprof_tool.cpp.
+# (smn_protobuf.cpp is csgo/blade/mcv only; vprof_tool.cpp is everything but blade.)
+filegroup(
+    name = "core_srcs",
+    srcs = [
+        "core/ChatTriggers.cpp",
+        "core/concmd_cleaner.cpp",
+        "core/ConCmdManager.cpp",
+        "core/ConsoleDetours.cpp",
+        "core/ConVarManager.cpp",
+        "core/CoreConfig.cpp",
+        "core/EventManager.cpp",
+        "core/frame_hooks.cpp",
+        "core/GameHooks.cpp",
+        "core/HalfLife2.cpp",
+        "core/Logger.cpp",
+        "core/logic_bridge.cpp",
+        "core/MenuManager.cpp",
+        "core/MenuStyle_Base.cpp",
+        "core/MenuStyle_Radio.cpp",
+        "core/MenuStyle_Valve.cpp",
+        "core/MenuVoting.cpp",
+        "core/NextMap.cpp",
+        "core/PlayerManager.cpp",
+        "core/sm_autonatives.cpp",
+        "core/smn_bitbuffer.cpp",
+        "core/smn_commandline.cpp",
+        "core/smn_console.cpp",
+        "core/smn_entities.cpp",
+        "core/smn_events.cpp",
+        "core/smn_halflife.cpp",
+        "core/smn_hudtext.cpp",
+        "core/smn_keyvalues.cpp",
+        "core/smn_nextmap.cpp",
+        "core/smn_player.cpp",
+        "core/smn_usermsgs.cpp",
+        "core/smn_vector.cpp",
+        "core/sm_stringutil.cpp",
+        "core/sourcemm_api.cpp",
+        "core/sourcemod.cpp",
+        "core/TimerSys.cpp",
+        "core/UserMessages.cpp",
+        "core/vprof_tool.cpp",
+    ],
+)
+
+filegroup(
+    name = "sdktools_srcs",
+    srcs = [
+        "extensions/sdktools/clientnatives.cpp",
+        "extensions/sdktools/extension.cpp",
+        "extensions/sdktools/gamerulesnatives.cpp",
+        "extensions/sdktools/hooks.cpp",
+        "extensions/sdktools/inputnatives.cpp",
+        "extensions/sdktools/output.cpp",
+        "extensions/sdktools/outputnatives.cpp",
+        "extensions/sdktools/teamnatives.cpp",
+        "extensions/sdktools/tempents.cpp",
+        "extensions/sdktools/tenatives.cpp",
+        "extensions/sdktools/trnatives.cpp",
+        "extensions/sdktools/variant-t.cpp",
+        "extensions/sdktools/vcallbuilder.cpp",
+        "extensions/sdktools/vcaller.cpp",
+        "extensions/sdktools/vdecoder.cpp",
+        "extensions/sdktools/vglobals.cpp",
+        "extensions/sdktools/vhelpers.cpp",
+        "extensions/sdktools/vnatives.cpp",
+        "extensions/sdktools/voice.cpp",
+        "extensions/sdktools/vsound.cpp",
+        "extensions/sdktools/vstringtable.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+filegroup(
+    name = "sdkhooks_srcs",
+    srcs = [
+        "extensions/sdkhooks/extension.cpp",
+        "extensions/sdkhooks/natives.cpp",
+        "extensions/sdkhooks/takedamageinfohack.cpp",
+        "extensions/sdkhooks/util.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+# CSS-only: rulesfix.cpp is csgo-only and omitted.
+filegroup(
+    name = "cstrike_srcs",
+    srcs = [
+        "extensions/cstrike/extension.cpp",
+        "extensions/cstrike/forwards.cpp",
+        "extensions/cstrike/natives.cpp",
+        "extensions/cstrike/RegNatives.cpp",
+        "extensions/cstrike/timeleft.cpp",
+        "extensions/cstrike/util_cstrike.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+# TF2's game extension. Unlike cstrike, extensions/tf2/AMBuilder builds only
+# one binary (there's no second engine branch it's shared with the way
+# cstrike is shared between css and csgo), so this is the full source list.
+filegroup(
+    name = "tf2_srcs",
+    srcs = [
+        "extensions/tf2/extension.cpp",
+        "extensions/tf2/natives.cpp",
+        "extensions/tf2/RegNatives.cpp",
+        "extensions/tf2/util.cpp",
+        "extensions/tf2/criticals.cpp",
+        "extensions/tf2/holiday.cpp",
+        "extensions/tf2/teleporter.cpp",
+        "extensions/tf2/gameplayrules.cpp",
+        "extensions/tf2/conditions.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+filegroup(
+    name = "topmenus_srcs",
+    srcs = [
+        "extensions/topmenus/extension.cpp",
+        "extensions/topmenus/smn_topmenus.cpp",
+        "extensions/topmenus/TopMenu.cpp",
+        "extensions/topmenus/TopMenuManager.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+# HookWrapper.cpp and jit_hook.cpp are present in the tree but deliberately not
+# built: upstream's AMBuilder omits them, and HookWrapper.h references
+# IHookWrapper / ISMDelegate / JIT_FreeHook, none of which exist in the current
+# public/extensions/IBinTools.h. Adding them back does not compile.
+filegroup(
+    name = "bintools_srcs",
+    srcs = [
+        "extensions/bintools/CallMaker.cpp",
+        "extensions/bintools/CallWrapper.cpp",
+        "extensions/bintools/extension.cpp",
+        "public/smsdk_ext.cpp",
+    ] + select({
+        "@platforms//cpu:x86_32": ["extensions/bintools/jit_call.cpp"],
+        "//conditions:default": ["extensions/bintools/jit_call_x64.cpp"],
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# Header cc_libraries
+#
+# Each captures the include paths that are relative to @sourcemod_sdk, so the
+# macro (which runs in a different repo context) doesn't need to hardcode paths.
+# ---------------------------------------------------------------------------
+
+# Broad headers needed by the loader, logic, and core.
+#
+# The include roots mirror the logic/core AMBuilders, which put the SourceMod
+# root itself on the path: sources reach for <bridge/include/...> spelled
+# relative to that root, not to their own directory.
+cc_library(
+    name = "sm_root_hdrs",
+    hdrs = glob([
+        "core/*.h",
+        "core/logic/*.h",
+        "bridge/include/*.h",
+        "versionlib/*.h",
+    ]),
+    includes = [
+        "",
+        "core",
+        "core/logic",
+    ],
+    deps = [
+        ":sourcemod_headers",
+        ":sourcepawn_headers",
+    ],
+)
+
+# safetyhook — the hooking library CDetour is built on, vendored by SourceMod
+# as a submodule. Its AMBuilder deliberately *resets* every inherited compiler
+# flag and define before building, so this target does not pick up the SDK's
+# platform defines either; it is compiled in isolation and only its headers are
+# exposed. Zydis arrives pre-amalgamated as one C file.
+cc_library(
+    name = "safetyhook",
+    srcs = [
+        "public/safetyhook/src/allocator.cpp",
+        "public/safetyhook/src/easy.cpp",
+        "public/safetyhook/src/inline_hook.cpp",
+        "public/safetyhook/src/mid_hook.cpp",
+        "public/safetyhook/src/utility.cpp",
+        "public/safetyhook/src/vmt_hook.cpp",
+        "public/safetyhook/zydis/Zydis.c",
+    ] + select({
+        "@platforms//os:windows": ["public/safetyhook/src/os.windows.cpp"],
+        "//conditions:default": ["public/safetyhook/src/os.linux.cpp"],
+    }),
+    hdrs = glob([
+        "public/safetyhook/include/**/*.hpp",
+        "public/safetyhook/zydis/*.h",
+    ]),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/EHsc", "/permissive-"],
+        # Upstream also passes -Werror here; it is dropped for the same reason
+        # the extension rules drop it (see README, "What was removed and why").
+        #
+        # This target does not take the shared suppressions from
+        # //sourcemod:warnings.bzl, because upstream's AMBuilder resets every
+        # inherited flag before building safetyhook and this mirrors that. The
+        # two -Wno-unused-* are what the amalgamated Zydis needs on its own: it
+        # defines a full opcode table, most of which any single build leaves
+        # untouched.
+        "//conditions:default": [
+            "-fPIC",
+            "-Wno-unused-function",
+            "-Wno-unused-const-variable",
+        ],
+    }),
+    includes = [
+        "public/safetyhook/include",
+        "public/safetyhook/zydis",
+    ],
+)
+
+cc_library(
+    name = "cdetour_hdrs",
+    hdrs = glob([
+        "public/CDetour/*.h",
+        "public/jit/*.h",
+        "public/jit/x86/*.h",
+    ]),
+    includes = [
+        "public/CDetour",
+        "public/jit",
+        "public/jit/x86",
+    ],
+    deps = [":safetyhook"],
+)
+
+cc_library(
+    name = "sdktools_hdrs",
+    hdrs = glob(["extensions/sdktools/*.h"]),
+    includes = ["extensions/sdktools"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "sdkhooks_hdrs",
+    hdrs = glob(["extensions/sdkhooks/*.h"]),
+    includes = ["extensions/sdkhooks"],
+    deps = [":sourcemod_headers"],
+)
+
+cc_library(
+    name = "cstrike_hdrs",
+    hdrs = glob(["extensions/cstrike/*.h"]),
+    includes = ["extensions/cstrike"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "tf2_hdrs",
+    hdrs = glob(["extensions/tf2/*.h"]),
+    includes = ["extensions/tf2"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "topmenus_hdrs",
+    hdrs = glob(["extensions/topmenus/*.h"]),
+    includes = ["extensions/topmenus"],
+    deps = [":sourcemod_headers"],
+)
+
+cc_library(
+    name = "bintools_hdrs",
+    hdrs = glob(["extensions/bintools/*.h"]),
+    includes = ["extensions/bintools"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Static data files
+# ---------------------------------------------------------------------------
+
+# configs/ minus the two subtrees that upstream's PackageScript routes
+# elsewhere: configs/cfg goes to cfg/sourcemod, and configs/metamod holds the
+# MetaMod plugin VDF, which belongs at addons/metamod.
+filegroup(
+    name = "configs",
+    srcs = glob(
+        ["configs/**"],
+        exclude = [
+            "configs/cfg/**",
+            "configs/metamod/**",
+        ],
+    ),
+)
+
+# Server console configs, unpacked at cfg/sourcemod rather than under addons/.
+filegroup(
+    name = "configs_cfg",
+    srcs = glob(["configs/cfg/**"]),
+)
+
+filegroup(
+    name = "gamedata",
+    srcs = glob(["gamedata/**"]),
+)
+
+filegroup(
+    name = "translations",
+    srcs = glob(["translations/**"]),
+)
+
+# MetaMod VDF that registers SourceMod as a MetaMod plugin.
+filegroup(
+    name = "sourcemod_vdf",
+    srcs = ["configs/metamod/sourcemod.vdf"],
+)
+
+# ---------------------------------------------------------------------------
+# Extension autoload sentinels
+#
+# SourceMod's TryAutoload() scans addons/sourcemod/extensions/ for *.autoload
+# files and loads the matching extension binary. These empty files trigger that
+# mechanism. They are not part of the upstream source tree and must be generated.
+#
+# The stem is the extension name *without* `.ext`: TryAutoload() replaces the
+# `.autoload` suffix with `.ext` and hands that to LoadAutoExtension(), which
+# appends the game suffix and library extension itself. Naming these
+# `sdktools.ext.autoload` instead sends it looking for `sdktools.ext.ext.so`.
+#
+# One genrule per extension this SDK can produce, not one filegroup bundling
+# them all: which sentinels a given game server actually wants depends on
+# which branch it's built for (a "game.<x>" one only for branches with a
+# per-game extension -- see _GAME_EXTENSIONS in //sourcemod:server.bzl), so
+# sourcemod_game_server() picks the individual targets it needs by label
+# rather than being handed a fixed bundle that assumes every build is css.
+# ---------------------------------------------------------------------------
+
+[genrule(
+    name = ext + "_autoload_file",
+    outs = [ext + ".autoload"],
+    cmd = "touch $@",
+) for ext in [
+    "sdktools",
+    "sdkhooks",
+    "game.cstrike",
+    "game.tf2",
+    "topmenus",
+    "bintools",
+]]
+
+# ---------------------------------------------------------------------------
+# Compiled plugins
+#
+# All 24 bundled SourceMod plugins. Seven are shipped disabled by default
+# (matching AMBuild's PackageScript disabled_plugins set). Of those seven,
+# mapchooser / nominations / rockthevote are promoted to the active directory
+# by the server macro; the remaining four stay in plugins/disabled/.
+# ---------------------------------------------------------------------------
+
+# The parts that multi-file plugins `#include` by relative path.
+_PLUGIN_PARTS = glob(
+    ["plugins/{}/*.sp".format(name) for name in PLUGINS_WITH_PARTS],
+    allow_empty = False,
+)
+
+# Each plugin reports its own install directory through PackageFilesInfo, so
+# these targets are handed straight to pkg_tar by sourcemod_server(). They are
+# deliberately NOT collected into a filegroup first: filegroup forwards only
+# DefaultInfo, which would drop the destination and flatten every .smx into the
+# root of the layer.
+[sourcemod_plugin(
+    name = "plugin_" + name,
+    src = "plugins/" + name + ".sp",
+    extra_srcs = _PLUGIN_PARTS,
+    plugin_name = name,
+    dest_dir = "addons/sourcemod/plugins/disabled",
+) for name in DISABLED_PLUGINS]
+
+[sourcemod_plugin(
+    name = "plugin_" + name,
+    src = "plugins/" + name + ".sp",
+    extra_srcs = _PLUGIN_PARTS,
+    plugin_name = name,
+    dest_dir = "addons/sourcemod/plugins",
+) for name in ACTIVE_PLUGINS]

@@ -1,0 +1,59 @@
+"""rules_sourcemod — Bazel rules for building SourceMod extensions and plugins.
+
+This module replaces the upstream AMBuild/Python build system with standard
+Bazel C++ toolchain builds. See README.md for the rationale and usage.
+"""
+
+module(
+    name = "rules_sourcemod",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+
+# The autoconfigured C++ toolchain repo, needed by name so
+# //platforms:msvc_x86_32_toolchain can point at the 32-bit MSVC toolchain
+# Bazel generates there but does not register. See that target's comment.
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc")
+
+# Archive assembly for sourcemod_package.
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
+# ---------------------------------------------------------------------------
+# SourceMod SDK sources.
+#
+# The SDK is header-only from our perspective (plus smsdk_ext.cpp), so it is
+# fetched as source and compiled with the consumer's own C++ toolchain. This is
+# what allows a standard cc_binary to replace AMBuild entirely.
+# ---------------------------------------------------------------------------
+sourcemod = use_extension("//sourcemod:extensions.bzl", "sourcemod")
+use_repo(sourcemod, "sourcemod_sdk")
+
+register_toolchains("//spcomp:spcomp_toolchain")
+
+# Bazel's MSVC autoconfiguration generates a complete 32-bit toolchain
+# (@local_config_cc//:cc-compiler-x64_x86_windows) but registers only the
+# 64-bit and arm64 ones, so //platforms:windows_x86_32 fails toolchain
+# resolution out of the box. Since srcds is predominantly 32-bit, that is the
+# common case here. Nothing is written -- this only registers what the
+# autoconfiguration already produced.
+register_toolchains("//platforms:msvc_x86_32_toolchain")
+
+# ---------------------------------------------------------------------------
+# HL2SDK + Metamod:Source for every branch this module has a ready-made
+# preset for (//sourcemod:BUILD.bazel) -- requested here, not left for each
+# consumer to ask for independently, so a consumer that only wants e.g. the
+# tf2 game server can depend on //sourcemod:sourcemod_tf2 directly without
+# ever naming @hl2sdk_tf2 or @metamod_source itself. Each is only actually
+# fetched when something requests a target from it -- the presets are tagged
+# `manual`, so this alone doesn't pull any of them into `bazel build //...`.
+# ---------------------------------------------------------------------------
+hl2sdk = use_extension("//hl2sdk:repositories.bzl", "hl2sdk")
+hl2sdk.branch(name = "css")
+hl2sdk.branch(name = "tf2")
+hl2sdk.branch(name = "l4d2")
+hl2sdk.branch(name = "sdk2013")
+use_repo(hl2sdk, "hl2sdk_css", "hl2sdk_tf2", "hl2sdk_l4d2", "hl2sdk_sdk2013", "metamod_source")
