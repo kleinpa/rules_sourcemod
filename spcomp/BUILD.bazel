@@ -1,0 +1,19 @@
+load("//spcomp:toolchain.bzl", "spcomp_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+toolchain_type(name = "toolchain_type")
+
+# The compiler is built from source by @sourcemod_sdk; this only wires it up as
+# the default implementation of the toolchain type above.
+spcomp_toolchain(
+    name = "spcomp_impl",
+    compiler = "@sourcemod_sdk//:spcomp",
+    stdlib_includes = "@sourcemod_sdk//:spcomp_stdlib_includes",
+)
+
+toolchain(
+    name = "spcomp_toolchain",
+    toolchain = ":spcomp_impl",
+    toolchain_type = ":toolchain_type",
+)
