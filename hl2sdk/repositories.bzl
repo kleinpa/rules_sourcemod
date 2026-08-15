@@ -9,6 +9,24 @@ vstdlib as prebuilt binaries only (the tree has a tier0_exclude.vpc and no
 tier0 sources). Those binaries are consumed as-is; see hl2sdk.BUILD.bazel.
 """
 
+def _apply_patch(repository_ctx, patch_label):
+    """Applies one patch via the host `patch` binary, not repository_ctx.patch().
+
+    repository_ctx.patch() (Bazel's own, portable patch parser) silently
+    mis-locates hunks past the first in a single multi-hunk patch against a
+    large file -- confirmed against mathlib/mathlib_base.cpp's compat
+    patch (see the "ep1 only" comment in _hl2sdk_impl below): the first
+    hunk lands, later ones don't, with no error raised either way. The
+    same patch applies cleanly with GNU patch (`patch -p1 --dry-run`)
+    against the same tree, so this shells out to that instead. Costs
+    portability -- a `patch` binary has to be on the host's PATH -- but
+    this whole cross-compiling setup already assumes a Linux-like host
+    (see windows/xwin_sysroot.bzl), so that's not a new requirement.
+    """
+    result = repository_ctx.execute(["patch", "-p1", "--fuzz=0", "-i", repository_ctx.path(patch_label)])
+    if result.return_code != 0:
+        fail("applying {} failed:\n{}\n{}".format(patch_label, result.stdout, result.stderr))
+
 # alliedmodders/metamod-source, branch 1.12-dev. Supplies SourceHook and the
 # ISmmAPI/ISmmPlugin headers; a Metamod extension cannot be compiled without
 # it.
@@ -183,20 +201,12 @@ HL2SDK_BRANCHES = {
     # overlay changes this repo has no branch that needs yet -- The Hidden
     # only ships a Windows dedicated server. "linux_sdk" below is still the
     # real directory (so the generated cc_import labels stay valid Starlark,
-    # which is checked eagerly at package load regardless of which cc_import
-    # a build actually selects) -- it just doesn't contain files under the
-    # names this overlay looks for, so building //hl2sdk:hl2sdk_ep1 (or
-    # anything depending on it) for a linux_x86_* platform fails at the
-    # missing-file stage today.
-    #
-    # Also untested against a real compiler on any platform: this entry adds
-    # the manifest data only. Building it will very likely need source-level
-    # patches (this SDK snapshot predates AMBuild and was only ever built
-    # with a period MSVC) -- e.g. public/tier0/memalloc.h calls
-    # IsPowerOfTwo() (tier0/commonmacros.h) without including that header,
-    # which is a genuine missing #include rather than an MSVC-only
-    # tolerance, and will fail on any compiler unless something else in the
-    # translation unit happens to pull commonmacros.h in first.
+    # which is checked eagerly at package load regardless of which
+    # cc_import a build actually selects) -- it just doesn't contain files
+    # under the names this overlay looks for, so building //hl2sdk:hl2sdk_ep1
+    # (or anything depending on it) for a linux_x86_* platform will fail at
+    # the missing-file stage. windows_x86_32 is the only target this branch
+    # is actually wired for.
     "ep1": {
         "commit": "4b0cde271be6806b95842e78348009712a8b3fbe",
         "code": 1,
@@ -280,6 +290,45 @@ def _metamod_impl(repository_ctx):
         stripPrefix = "amtl-" + _METAMOD_AMTL_COMMIT,
     )
 
+    # sh_memfuncinfo.h's SourceHook::GetFuncInfo introspects a pointer-to-
+    # member-function by pattern-matching the machine code of the compiler-
+    # generated thiscall thunk `&Class::VirtualMethod` produces, since
+    # MSVC's ABI (unlike Itanium's) doesn't encode the vtable index directly
+    # in the pointer's own bytes. Its patterns only recognize the compact,
+    # 2-to-3-instruction thunk shape real MSVC and GCC emit (`mov eax,[ecx];
+    # jmp [eax+off]`, plus a vararg variant) -- clang-cl (this project's
+    # cross-compiling toolchain; see windows/xwin_sysroot.bzl) instead keeps
+    # a full stack frame and loads the vtable slot into eax *before* the
+    # tail jmp, a longer shape none of the existing patterns match at any
+    # optimization level tried (confirmed at both fastbuild and -c opt).
+    # Unmatched falls through to `isVirtual = false`, not an error -- every
+    # GetFuncInfo call on a simple no-argument virtual (IServerGameDLL::
+    # GameInit, for one) silently returns a bogus vtblindex instead of
+    # failing loudly, and every SH_MANUALHOOK_RECONFIGURE built from it
+    # corrupts the hook it configures. Unlike the ep1-only patches below,
+    # this is a general clang-cl/SourceHook incompatibility with no
+    # engine-branch condition -- applied whenever Metamod is fetched at
+    # all, the same as the amtl submodule fetch just above.
+    _apply_patch(repository_ctx, repository_ctx.attr._clang_thiscall_thunk_patch)
+
+    # loader/serverplugin.cpp's vtable surgery for ClientFullyConnect (added
+    # to the vtable by Alien Swarm, so every newer engine's vtable already
+    # has room for it and every older one needs its later entries shifted up
+    # by one slot to make room) excludes AlienSwarm/Portal2/Blade/Insurgency/
+    # DOI/CSGO/MCV/DOTA from that shift, correctly, but not Episode1 -- an
+    # older engine with the same "no ClientFullyConnect slot yet" vtable
+    # shape as the rest of that list, just missing from it. Left as-is, ep1's
+    # ClientFullyConnect is misdetected as non-virtual (it resolves to
+    # whatever landed in the *shifted* slot instead) and trips
+    # `assert(mfp_fconnect.isVirtual)` at startup. A companion block just
+    # above this one (not patched) already gets ep1 right, excluding it by
+    # name alongside DarkMessiah -- this is the same fix applied to the block
+    # upstream missed it in. Scoped to ep1 being requested at all, same as
+    # the HL2SDK patches above, since it's dead code for every branch this
+    # module doesn't build for.
+    if "ep1" in repository_ctx.attr.branches:
+        _apply_patch(repository_ctx, repository_ctx.attr._ep1_serverplugin_vtable_patch)
+
     # One core is built per requested engine branch, so the overlay is a
     # template: the branch list arrives as data and //hl2sdk:metamod_cores.bzl
     # turns it into targets. Hardcoding a branch here would make @metamod_source
@@ -314,6 +363,14 @@ metamod_repository = repository_rule(
             default = Label("//hl2sdk:metamod.BUILD.bazel"),
             allow_single_file = True,
         ),
+        "_ep1_serverplugin_vtable_patch": attr.label(
+            default = Label("//patches:metamod-ep1-clientfullyconnect-vtable.patch"),
+            allow_single_file = True,
+        ),
+        "_clang_thiscall_thunk_patch": attr.label(
+            default = Label("//patches:metamod-clang-thiscall-thunk.patch"),
+            allow_single_file = True,
+        ),
     },
 )
 
@@ -327,6 +384,116 @@ def _hl2sdk_impl(repository_ctx):
         ),
         stripPrefix = "hl2sdk-" + spec["commit"],
     )
+
+    # ep1 only: source-level incompatibilities with a strict/modern compiler
+    # that the pinned commit's own tree never had to satisfy (it predates
+    # AMBuild; there's no per-branch AMBuilder to compare against, just what
+    # actually fails to build). All are things a native MSVC cl.exe -- what
+    # this code was actually written and tested against -- tolerated
+    # silently:
+    #
+    # 1. public/mathlib/math_base.h's Float2Int/Floor2Int/Ceil2Int use
+    #    MSVC-dialect inline asm to set the FPU rounding mode, ending with
+    #    `movzx eax, CtrlwdHolder` -- moving the (16-bit) FPU control word
+    #    fnstcw just wrote into eax, zero-extended. CtrlwdHolder is declared
+    #    `int` (its low 16 bits are the only ones fnstcw ever touches; the
+    #    rest is uninitialized stack garbage), so the instruction's true
+    #    source size doesn't match its C-declared one. Clang's inline-asm
+    #    parser (used both by a native clang-cl and this module's
+    #    cross-compiling one, see windows/xwin_sysroot.bzl) won't guess,
+    #    and errors "ambiguous operand size for instruction 'movzx'". The
+    #    patch adds the `word ptr` real MSVC inferred implicitly, which is
+    #    what the code always meant.
+    #
+    # 2. public/tier0/memalloc.h calls IsPowerOfTwo() (tier0/commonmacros.h)
+    #    without including that header -- every translation unit that
+    #    happened to pull commonmacros.h in first via some other path (e.g.
+    #    tier0/dbg.h, which includes basetypes.h, which includes it) never
+    #    noticed. tier1/mempool.cpp doesn't: it includes tier1/mempool.h,
+    #    which includes tier0/memalloc.h before anything that would supply
+    #    the declaration, so the *first* header in the chain to actually use
+    #    IsPowerOfTwo is the one missing its own dependency. Neither of
+    #    these repeats in newer branches (later HL2SDK snapshots replaced
+    #    the asm with intrinsics and, separately, happen to route through a
+    #    path that pulls commonmacros.h in sooner).
+    #
+    # 3. public/mathlib/ssemath.h's SSEVec4/X()/Y()/Z() read __m128 lanes via
+    #    `.m128_f32[idx]`, an MSVC-only member of the <xmmintrin.h> __m128
+    #    definition (a union, in MSVC's own CRT headers) -- gated on
+    #    `#ifdef _LINUX`/`#else`, i.e. "assume any non-Linux build is real
+    #    MSVC". A native clang-cl or this module's cross-compiling one both
+    #    use LLVM's own <xmmintrin.h>, where __m128 is a plain vector
+    #    builtin with no such member, so `.m128_f32` fails to parse there
+    #    even while targeting Windows. The file already carries a working,
+    #    portable fallback for exactly this case (an `l_m128` union cast,
+    #    behind the `_LINUX` branch) -- the patch just widens that branch's
+    #    condition to "not real MSVC" (`!_MSC_VER || __clang__`) instead of
+    #    "not Windows", so Clang takes it regardless of target OS.
+    #
+    #    Same file, same patch: fnegate()'s `int32 signmask[4] =
+    #    {0x80000000, ...}` list-initializes a *signed* array with a value
+    #    one past INT32_MAX. GCC/MSVC narrow it silently; Clang treats
+    #    narrowing a compile-time constant in a braced-init-list as
+    #    ill-formed, which -Wno-c++11-narrowing (sourcemod/warnings.bzl)
+    #    can't waive -- unlike the plain deprecation warnings that flag
+    #    covers, this one is a language rule, not a diagnostic opt-out. An
+    #    explicit `(int32)` cast on each element sidesteps the rule (a cast
+    #    is exempt) without changing the bit pattern.
+    #
+    # 4. mathlib/mathlib_base.cpp has the same constant-narrowing problem
+    #    once more (`_PS_EXTERN_CONST_TYPE(am_sign_mask, int32,
+    #    0x80000000)`, a macro expanding to the same kind of braced-init as
+    #    #3) -- same `(int32)` cast fix, at the macro's call site rather
+    #    than its definition, since every *other* call site's constant
+    #    already fits. It also has three `_declspec(naked)` functions
+    #    (VectorMA's two overloads, plus a dead/`Assert(0)`-guarded
+    #    `_SSE_VectorMA`) that open with an `Assert(...)` call before their
+    #    all-asm body: a naked function is a contract that its body is
+    #    *only* inline asm (the compiler emits no prologue/epilogue, so
+    #    there's no stack frame for a real function call to use), which
+    #    MSVC never enforced but Clang does. VectorMA's two overloads
+    #    already carry a working portable C++ fallback in their own
+    #    `#else`; the patch just widens the `#if _WIN32` guard picking
+    #    between them to also exclude Clang, the same `!_MSC_VER ||
+    #    __clang__` shape as #3. `_SSE_VectorMA` has no such fallback and
+    #    nothing calls it (it's dead code, upstream's own FIXME says so) --
+    #    the patch excludes its body outright under Clang rather than
+    #    inventing a replacement for code that was never meant to run.
+    #
+    #    Same file, two more calls to `clamp(t, 0, 1)` where `t` is `float`
+    #    -- basetypes.h's `clamp` is `template<class T> T clamp(T const&,
+    #    T const&, T const&)`, one T for all three by-reference parameters,
+    #    so deducing T=float from `t` and T=int from the literals is a
+    #    genuine conflict, not merely a narrowing warning. Old MSVC's
+    #    template deduction was permissive enough to accept it anyway;
+    #    Clang's isn't. Spelling the literals `0.0f, 1.0f` makes every
+    #    argument's type agree, with no change in the value clamped to.
+    #
+    #    Also same file: the three `_3DNow_*` functions (Sqrt,
+    #    VectorNormalize, InvRSquared) are hand-written AMD 3DNow! asm
+    #    (`femms`, `PFRSQRT`, ...) -- a CPU feature line that AMD itself
+    #    retired around 2010, so MathLib_Init() (near the bottom of this
+    #    file) never actually selects these on any CPU this build could
+    #    run on; nothing exercises them. Clang's MASM parser doesn't
+    #    recognize the mnemonics at all, which is a parse error, not a
+    #    warning, so there's no flag to wave this one away with either.
+    #    Each has an exact-signature, already-portable equivalent earlier
+    #    in the same file (_VectorNormalize, _InvRSquared, or plain
+    #    sqrtf()) written for the no-SIMD-available fallback case -- the
+    #    patch delegates to those under Clang instead of hand-assembling a
+    #    replacement for a code path nothing reaches.
+    #
+    # None of these repeat in newer branches (later HL2SDK snapshots
+    # replaced the inline asm, the SSE union access, and the naked
+    # functions with intrinsics, and happen to route through a path that
+    # pulls commonmacros.h in sooner), so all these patches are scoped to
+    # ep1 alone. See _apply_patch's own docstring for why these go through
+    # the host `patch` binary rather than repository_ctx.patch().
+    if branch == "ep1":
+        _apply_patch(repository_ctx, repository_ctx.attr._ep1_movzx_patch)
+        _apply_patch(repository_ctx, repository_ctx.attr._ep1_memalloc_patch)
+        _apply_patch(repository_ctx, repository_ctx.attr._ep1_ssemath_patch)
+        _apply_patch(repository_ctx, repository_ctx.attr._ep1_mathlib_base_patch)
 
     # The SDK headers compare SOURCE_ENGINE against SE_<NAME> constants, and
     # they reference engines other than the one being built (`#if SOURCE_ENGINE
@@ -371,6 +538,22 @@ hl2sdk_repository = repository_rule(
         ),
         "_build_file": attr.label(
             default = Label("//hl2sdk:hl2sdk.BUILD.bazel"),
+            allow_single_file = True,
+        ),
+        "_ep1_movzx_patch": attr.label(
+            default = Label("//patches:hl2sdk-ep1-movzx-operand-size.patch"),
+            allow_single_file = True,
+        ),
+        "_ep1_memalloc_patch": attr.label(
+            default = Label("//patches:hl2sdk-ep1-memalloc-include.patch"),
+            allow_single_file = True,
+        ),
+        "_ep1_ssemath_patch": attr.label(
+            default = Label("//patches:hl2sdk-ep1-ssemath-clang.patch"),
+            allow_single_file = True,
+        ),
+        "_ep1_mathlib_base_patch": attr.label(
+            default = Label("//patches:hl2sdk-ep1-mathlib-base-clang.patch"),
             allow_single_file = True,
         ),
     },

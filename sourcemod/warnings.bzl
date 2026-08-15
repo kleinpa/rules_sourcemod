@@ -40,6 +40,12 @@ _GCC = [
     "-Wno-unknown-pragmas",
     "-Wno-dangling-else",
     "-Wno-narrowing",
+    # Clang's own spelling of the above for list-initialization specifically
+    # (GCC's -Wno-narrowing doesn't cover it under Clang) -- e.g. ep1's
+    # mathlib/ssemath.h initializes a signed int32 array element with
+    # 0x80000000, which doesn't fit as a *signed* value; upstream's own
+    # compilers never enforced C++11 list-init narrowing rules against it.
+    "-Wno-c++11-narrowing",
     "-Wno-non-virtual-dtor",
     "-Wno-overloaded-virtual",
     "-Wno-delete-non-virtual-dtor",
@@ -69,8 +75,47 @@ _GCC = [
 ]
 
 # Upstream's MSVC configuration suppresses nothing comparable, so neither does
-# this: /W3 there is already quiet about the constructs GCC flags.
+# this: /W3 there is already quiet about the constructs GCC flags -- except
+# for one, which isn't actually about warning-quietness. `register` is
+# gone from the ISO C++17 grammar (not just deprecated), and the sources
+# still use it (e.g. SourceMod's own core/logic/MersenneTwister.h); Clang
+# (both a native clang-cl and this module's cross-compiling one, see
+# windows/xwin_sysroot.bzl) treats that as a hard error unless told
+# otherwise via -Wno-register, gated behind the same -Wregister spelling
+# it uses everywhere else. Real MSVC has no such diagnostic to begin with
+# (it silently accepts the extension), so this is a no-op there -- and
+# harmless even if cl.exe treated it as unrecognized, since MSVC downgrades
+# an unknown switch to a D9002 warning rather than failing the build.
 UPSTREAM_WARNING_COPTS = select({
-    "@rules_cc//cc/compiler:msvc-cl": [],
+    "@rules_cc//cc/compiler:msvc-cl": ["-Wno-register"],
     "//conditions:default": _GCC,
+})
+
+# The standard Win32 import libraries upstream links into every Windows
+# binary -- both SourceMod's and Metamod's own AMBuildScript apply this
+# same list (`configure_msvc()`/`cxx.like('msvc')`) unconditionally, not
+# gated per-target by whether that particular binary calls into one of
+# them. They are not pulled in by default the way e.g. kernel32.lib often
+# is: Metamod's loader (loader/utility.cpp's mm_GetGameName) calls
+# Shell32's CommandLineToArgvW and fails to link without shell32.lib
+# explicitly present, which is what surfaced this list was missing here at
+# all -- unlike UPSTREAM_WARNING_COPTS above, nothing analogous existed
+# before, since nothing had built a Windows binary that actually called
+# into one of the less-common libraries in the list.
+UPSTREAM_WINDOWS_LINKOPTS = select({
+    "@platforms//os:windows": [
+        "kernel32.lib",
+        "user32.lib",
+        "gdi32.lib",
+        "winspool.lib",
+        "comdlg32.lib",
+        "advapi32.lib",
+        "shell32.lib",
+        "ole32.lib",
+        "oleaut32.lib",
+        "uuid.lib",
+        "odbc32.lib",
+        "odbccp32.lib",
+    ],
+    "//conditions:default": [],
 })

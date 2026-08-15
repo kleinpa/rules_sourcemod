@@ -33,7 +33,8 @@ The macro compiles every SourceMod deliverable from source:
 
 plus Metamod's own loader and per-branch core (from @metamod_source, fetched
 by the `hl2sdk` extension alongside the engine branch). It then assembles
-those outputs together with @sourcemod_sdk's sourcepawn.vm.so and static data
+those outputs together with @sourcemod_sdk's sourcepawn.jit.x86.so (32-bit)
+or sourcepawn.vm.so (64-bit) and static data
 files into a single pkg_filegroup -- a PackageFilegroupInfo-bearing target,
 like sourcemod_extension/sourcemod_plugin carry PackageFilesInfo, with no
 archive format or install prefix baked in. The caller feeds it to their own
@@ -75,7 +76,8 @@ Usage (in //sourcemod:BUILD.bazel; see that file for the actual presets):
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_filegroup", "pkg_files", "strip_prefix")
 load("//hl2sdk:repositories.bzl", "HL2SDK_BRANCHES")
-load("//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+load("//sourcemod:rename.bzl", "shared_lib_output")
+load("//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS", "UPSTREAM_WINDOWS_LINKOPTS")
 
 visibility("private")
 
@@ -86,6 +88,17 @@ _SM = "@sourcemod_sdk"
 # replacing them -- there is no equivalent "32-bit subdirectory" to select
 # instead. See platforms/BUILD.bazel for where this config_setting comes from.
 _X86_64 = "@rules_sourcemod//platforms:x86_64"
+
+# Metamod's own install layout additionally splits by OS on a 64-bit target
+# (addons/metamod/bin/{linux64,win64}/ vs. a single addons/metamod/bin/
+# shared by 32-bit Windows and Linux) -- see the comment on this
+# config_setting in platforms/BUILD.bazel.
+_WINDOWS_X86_64 = "@rules_sourcemod//platforms:is_windows_x86_64"
+
+# Picks '.dll' vs '.so' in the renames below -- see shared_lib_output's
+# docstring (sourcemod/rename.bzl) for why the binaries themselves can't be
+# handed to pkg_files directly.
+_WINDOWS = "@rules_sourcemod//platforms:windows"
 
 # Every intermediate target this macro creates is private; the only target a
 # caller ever names is the final pkg_filegroup below.
@@ -103,10 +116,10 @@ _COPTS_COMMON = select({
     ],
 }) + UPSTREAM_WARNING_COPTS
 
-_LINKOPTS_POSIX = select({
+_LINKOPTS_COMMON = select({
     "@platforms//os:linux": ["-lpthread", "-lrt", "-ldl"],
     "//conditions:default": [],
-})
+}) + UPSTREAM_WINDOWS_LINKOPTS
 
 # Per-game "game extension" (SM.HL2ExtConfig with a Game_Extension section):
 # implements the natives specific to one game, e.g. extensions/cstrike for
@@ -145,21 +158,32 @@ _GAME_EXTENSIONS = {
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _shared_lib(name, deps, linkopts = [], visibility = _PRIVATE, tags = []):
-    """cc_binary(linkshared = True) with the args every SourceMod .so shares.
+def _shared_lib(name, deps, linkopts = [], tags = []):
+    """cc_binary(linkshared = True), narrowed to just its loadable module.
 
-    Bazel does not name a linkshared cc_binary's output after the target
-    (e.g. `name = "foo"` produces `libfoo.so`, not `foo.so`), but that
-    doesn't matter here: every caller hands this target straight to
-    `pkg_files`, whose `renames` maps by label, not by the underlying
-    filename -- see the x64-suffix rename below for the pattern.
+    On Windows a linkshared cc_binary also produces an import .lib next to
+    the .dll; shared_lib_output picks the right one once the target platform
+    is known (a plain pkg_files can only rename a label's files, not filter
+    them). The result still carries the binary's own target-derived filename
+    -- not the name SourceMod's loader actually looks for, e.g.
+    "sourcemod.logic" -- callers rename it to that via their own pkg_files
+    `renames`, the same as before shared_lib_output existed. That rename
+    can't happen here: with every game-server preset built in the same
+    package (//sourcemod:BUILD.bazel), a fixed name here would collide
+    across presets -- see rename.bzl's module docstring.
     """
     cc_binary(
-        name = name,
+        name = name + "_bin",
         linkshared = True,
         deps = deps,
         linkopts = linkopts,
-        visibility = visibility,
+        visibility = _PRIVATE,
+        tags = tags,
+    )
+    shared_lib_output(
+        name = name,
+        binary = name + "_bin",
+        visibility = _PRIVATE,
         tags = tags,
     )
 
@@ -228,7 +252,6 @@ def sourcemod_game_server(
         tags = tags,
     )
 
-    # x64 suffix is applied afterward as a pkg_files rename below.
     _shared_lib(
         name = p + "loader",
         deps = [p + "loader_lib"],
@@ -259,7 +282,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "logic",
         deps = [p + "logic_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -287,7 +310,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "core",
         deps = [p + "core_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -314,7 +337,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "sdktools",
         deps = [p + "sdktools_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -334,7 +357,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "sdkhooks",
         deps = [p + "sdkhooks_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -357,7 +380,7 @@ def sourcemod_game_server(
         _shared_lib(
             name = p + "game",
             deps = [p + "game_lib"],
-            linkopts = _LINKOPTS_POSIX,
+            linkopts = _LINKOPTS_COMMON,
             tags = tags,
         )
 
@@ -377,7 +400,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "topmenus",
         deps = [p + "topmenus_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -398,7 +421,7 @@ def sourcemod_game_server(
     _shared_lib(
         name = p + "bintools",
         deps = [p + "bintools_lib"],
-        linkopts = _LINKOPTS_POSIX,
+        linkopts = _LINKOPTS_COMMON,
         tags = tags,
     )
 
@@ -408,16 +431,20 @@ def sourcemod_game_server(
 
     # Loader lives in bin/ (not bin/x64/) on every arch: MetaMod expects it
     # there. Its filename does still take the x64 suffix on a 64-bit target,
-    # applied here since a rule's `name` can't itself be select()'d. Every
-    # rename below maps a _shared_lib target to the actual filename
-    # SourceMod's loader looks for (see that helper's docstring).
+    # and the .so/.dll suffix depends on OS -- both only knowable once the
+    # target platform is resolved, applied here as a pkg_files rename since
+    # a rule's `name` can't itself be select()'d. shared_lib_output already
+    # narrowed ":" + p + "loader" down to the one file this should be (see
+    # that helper's docstring for why it can't also apply this rename).
     pkg_files(
         name = p + "bin_loader_files",
         attributes = pkg_attributes(mode = "0755"),
         srcs = [":" + p + "loader"],
         prefix = "addons/sourcemod/bin",
         renames = select({
+            _WINDOWS_X86_64: {":" + p + "loader": "sourcemod_mm.x64.dll"},
             _X86_64: {":" + p + "loader": "sourcemod_mm.x64.so"},
+            _WINDOWS: {":" + p + "loader": "sourcemod_mm.dll"},
             "//conditions:default": {":" + p + "loader": "sourcemod_mm.so"},
         }),
         visibility = _PRIVATE,
@@ -427,7 +454,12 @@ def sourcemod_game_server(
     # Core, logic and the SourcePawn runtime live in bin/x64/ on a 64-bit
     # target, bin/ directly on a 32-bit one. The runtime is built in
     # @sourcemod_sdk rather than here because, unlike everything else the
-    # macro assembles, it depends on neither the HL2SDK nor MetaMod.
+    # macro assembles, it depends on neither the HL2SDK nor MetaMod -- but
+    # it's a linkshared cc_binary same as the other two, so it needs the
+    # same OS-keyed rename (sdk.BUILD.bazel's rename_shared_lib is safe to
+    # give it a fixed name outright, since it's built once per repo rather
+    # than once per preset -- see rename.bzl's module docstring -- so only
+    # its name needs restating here, not an OS branch).
     pkg_files(
         name = p + "bin_x64_files",
         attributes = pkg_attributes(mode = "0755"),
@@ -440,11 +472,16 @@ def sourcemod_game_server(
             _X86_64: "addons/sourcemod/bin/x64",
             "//conditions:default": "addons/sourcemod/bin",
         }),
-        renames = {
-            ":" + p + "core": "sourcemod.{}.so".format(ext),
-            ":" + p + "logic": "sourcemod.logic.so",
-            _SM + "//:sourcepawn_vm_shared": "sourcepawn.vm.so",
-        },
+        renames = select({
+            _WINDOWS: {
+                ":" + p + "core": "sourcemod.{}.dll".format(ext),
+                ":" + p + "logic": "sourcemod.logic.dll",
+            },
+            "//conditions:default": {
+                ":" + p + "core": "sourcemod.{}.so".format(ext),
+                ":" + p + "logic": "sourcemod.logic.so",
+            },
+        }),
         visibility = _PRIVATE,
         tags = tags,
     )
@@ -452,24 +489,41 @@ def sourcemod_game_server(
     # Extensions in extensions/x64/ on a 64-bit target, extensions/ directly
     # on a 32-bit one. ":" + p + "game" only exists for a branch with a
     # per-game extension (see `if game:` above).
-    _ext_renames = {
+    _ext_srcs = [
+        ":" + p + "sdktools",
+        ":" + p + "sdkhooks",
+        ":" + p + "topmenus",
+        ":" + p + "bintools",
+    ]
+    _ext_renames_windows = {
+        ":" + p + "sdktools": "sdktools.ext.{}.dll".format(ext),
+        ":" + p + "sdkhooks": "sdkhooks.ext.{}.dll".format(ext),
+        ":" + p + "topmenus": "topmenus.ext.dll",
+        ":" + p + "bintools": "bintools.ext.dll",
+    }
+    _ext_renames_default = {
         ":" + p + "sdktools": "sdktools.ext.{}.so".format(ext),
         ":" + p + "sdkhooks": "sdkhooks.ext.{}.so".format(ext),
         ":" + p + "topmenus": "topmenus.ext.so",
         ":" + p + "bintools": "bintools.ext.so",
     }
     if game:
-        _ext_renames[":" + p + "game"] = "game.{}.ext.{}.so".format(game["game"], ext)
+        _ext_srcs.append(":" + p + "game")
+        _ext_renames_windows[":" + p + "game"] = "game.{}.ext.{}.dll".format(game["game"], ext)
+        _ext_renames_default[":" + p + "game"] = "game.{}.ext.{}.so".format(game["game"], ext)
 
     pkg_files(
         name = p + "ext_files",
         attributes = pkg_attributes(mode = "0755"),
-        srcs = _ext_renames.keys(),
+        srcs = _ext_srcs,
         prefix = select({
             _X86_64: "addons/sourcemod/extensions/x64",
             "//conditions:default": "addons/sourcemod/extensions",
         }),
-        renames = _ext_renames,
+        renames = select({
+            _WINDOWS: _ext_renames_windows,
+            "//conditions:default": _ext_renames_default,
+        }),
         visibility = _PRIVATE,
         tags = tags,
     )
@@ -556,10 +610,16 @@ def sourcemod_game_server(
     # Metamod itself — the loader SourceMod's own binaries above are loaded
     # by, plus the per-branch core it dlopens by SOURCE_ENGINE at runtime.
     # SourceMod cannot run without this, so it ships in the same layer rather
-    # than left for the caller to assemble separately. Both the install path
-    # and the vdf pointing the engine at it are arch-keyed, same as the
-    # SourceMod binaries above: a 32-bit-only branch (l4d2, sdk2013) must not
-    # land in bin/linux64 pointed at by a 64-bit vdf.
+    # than left for the caller to assemble separately. The install path and
+    # the vdf pointing the engine at it are arch-keyed, same as the SourceMod
+    # binaries above: a 32-bit-only branch (l4d2, sdk2013) must not land in
+    # bin/linux64 pointed at by a 64-bit vdf.
+    #
+    # Metamod's own install path additionally splits by OS on a 64-bit
+    # target (bin/linux64/ vs. bin/win64/), unlike everything else in this
+    # macro which only splits by arch -- see _WINDOWS_X86_64's comment and
+    # the corresponding metamod_vdf/metamod_x64_vdf/metamod_win64_vdf choice
+    # below, which points the engine at whichever path this resolves to.
     # -----------------------------------------------------------------------
     pkg_files(
         name = p + "metamod_bin_files",
@@ -569,6 +629,7 @@ def sourcemod_game_server(
         ],
         attributes = pkg_attributes(mode = "0755"),
         prefix = select({
+            _WINDOWS_X86_64: "addons/metamod/bin/win64",
             _X86_64: "addons/metamod/bin/linux64",
             "//conditions:default": "addons/metamod/bin",
         }),
@@ -580,6 +641,7 @@ def sourcemod_game_server(
     pkg_files(
         name = p + "metamod_vdf_files",
         srcs = select({
+            _WINDOWS_X86_64: ["@metamod_source//:metamod_win64_vdf"],
             _X86_64: ["@metamod_source//:metamod_x64_vdf"],
             "//conditions:default": ["@metamod_source//:metamod_vdf"],
         }),

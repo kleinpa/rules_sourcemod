@@ -16,6 +16,8 @@ substituted in by //hl2sdk:repositories.bzl.
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_sourcemod//hl2sdk:metamod_cores.bzl", "CORE_COPTS", "PLATFORM_DEFINES", "metamod_cores")
+load("@rules_sourcemod//sourcemod:rename.bzl", "rename_shared_lib")
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WINDOWS_LINKOPTS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -71,7 +73,7 @@ _LOADER_LINKOPTS = select({
     "@platforms//os:linux": ["-ldl"],
     "@platforms//os:windows": ["shell32.lib"],
     "//conditions:default": [],
-})
+}) + UPSTREAM_WINDOWS_LINKOPTS
 
 cc_binary(
     name = "_loader_so",
@@ -90,10 +92,10 @@ cc_binary(
     deps = [":metamod_headers"],
 )
 
-copy_file(
+rename_shared_lib(
     name = "metamod_loader",
-    src = ":_loader_so",
-    out = "server.so",
+    binary = ":_loader_so",
+    filename = "server",
 )
 
 # ---------------------------------------------------------------------------
@@ -105,12 +107,14 @@ metamod_cores(branches = %{cores})
 # ---------------------------------------------------------------------------
 # Static data
 #
-# metamod_vdf/metamod_x64_vdf tell the engine where the loader is: it scans
-# addons/*.vdf, and only the one matching the loader's actual install path
-# (see sourcemod/server.bzl's arch-keyed select on these) is meaningful --
-# the other is simply not picked up. metamod_vdf points at the 32-bit
-# install path and must not share metamod_x64_vdf's source file (they used
-# to be identical here, which pointed 32-bit servers at a 64-bit vdf).
+# metamod_vdf/metamod_x64_vdf/metamod_win64_vdf tell the engine where the
+# loader is: it scans addons/*.vdf, and only the one matching the loader's
+# actual install path (see sourcemod/server.bzl's OS/arch-keyed select on
+# these) is meaningful -- the others are simply not picked up. The generic
+# `metamod_vdf` points at addons/metamod/bin/server with no arch/OS
+# subdirectory or extension; the engine's own module loader appends
+# .so/.dll and is the only reader that needs to, so this one file serves
+# both 32-bit Windows and 32-bit Linux.
 #
 # metaplugins.ini is the plugin list Metamod reads at startup. Upstream ships it
 # containing nothing but comments, which is what a server whose plugins all
@@ -128,6 +132,12 @@ copy_file(
     name = "metamod_x64_vdf",
     src = "support/metamod_linux64.vdf",
     out = "metamod_x64.vdf",
+)
+
+copy_file(
+    name = "metamod_win64_vdf",
+    src = "support/metamod_win64.vdf",
+    out = "metamod_win64.vdf",
 )
 
 filegroup(

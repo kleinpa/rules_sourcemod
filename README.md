@@ -89,7 +89,7 @@ game server directory.
 
 ## Game servers
 
-Four ready-made presets, each a complete SourceMod + Metamod build for one
+Five ready-made presets, each a complete SourceMod + Metamod build for one
 HL2SDK branch, packaged as a `pkg_filegroup`:
 
 | Preset               | Branch    | Game extension | Arch          |
@@ -98,6 +98,7 @@ HL2SDK branch, packaged as a `pkg_filegroup`:
 | `sourcemod_tf2`      | `tf2`     | yes (`extensions/tf2`)     | 64-bit |
 | `sourcemod_l4d2`     | `l4d2`    | no              | 32-bit only   |
 | `sourcemod_sdk2013`  | `sdk2013` | no              | 32-bit only   |
+| `sourcemod_ep1`      | `ep1`     | no              | 32-bit only, Windows only |
 
 Bundled plugins and archive format are left to the caller:
 
@@ -127,10 +128,15 @@ branch rather than a game; every SDK2013 mod wants the same binaries, and a
 consumer building one just points its own `pkg_tar`'s `package_dir` at that
 mod's install path.
 
-These four presets are the complete list — the macro behind them isn't
+These five presets are the complete list — the macro behind them isn't
 public API, since HL2SDK_BRANCHES (`hl2sdk/repositories.bzl`) is a closed
 set and every branch in it already has a preset. Adding a branch is a dict
 entry there plus a preset in `sourcemod/BUILD.bazel`, not new code.
+
+`ep1` (the original, pre-Orange Box Source engine) is the one branch here
+with no Linux wiring at all -- see that entry's comment in
+`hl2sdk/repositories.bzl` for why -- so `sourcemod_ep1` only builds for
+`windows_x86_32`.
 
 Extensions don't need the HL2SDK at all unless they call engine APIs
 (SourceHook, `edict_t`, netprops) — one that only talks to SourceMod's own
@@ -167,6 +173,39 @@ out of the box. This module registers the generated toolchain itself
 and nothing extra is needed beyond a Visual Studio install.
 
 l4d2 and sdk2013 are 32-bit only; see Design below.
+
+### Cross-compiling from Linux
+
+A `windows_x86_32` build can also be produced on a Linux host, without a
+Windows machine, via `clang-cl`/`lld-link`. `toolchains_llvm` has no Windows
+target support out of the box (tracked upstream, all still open, as of this
+writing: bazel-contrib/toolchains_llvm#395, #390, #642), so this module
+patches it (`patches/toolchains_llvm-windows-i686.patch`, applied through
+`MODULE.bazel`'s `single_version_override`) rather than waiting on it. The
+patch adds an isolated Windows/clang-cl code path that leaves the existing
+Unix/Darwin toolchain generation untouched; `windows/xwin_sysroot.bzl` fetches
+the Windows SDK + MSVC CRT (via [xwin](https://github.com/Jake-Shadle/xwin))
+the compiler needs. Both files document the bugs hit and worked around along
+the way in more detail than fits here.
+
+This toolchain is deliberately *not* registered by default — cross-compiling
+this way pulls a full LLVM distribution and a Windows SDK/CRT sysroot under
+Microsoft's own distribution terms (see `windows/xwin_sysroot.bzl`), neither
+of which a plain `bazel build //...` should pay for unasked. Opt in per
+build:
+
+```console
+$ bazel build --platforms=@rules_sourcemod//platforms:windows_x86_32 \
+    --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows \
+    //:my_addon
+```
+
+Verified end to end — including through this repo's own SDK headers, not
+just a synthetic example — by building `//tests:test_ext` this way and
+confirming the output is a real 32-bit PE DLL. Not yet verified: an
+HL2SDK-backed extension (`tier0.lib`/`vstdlib.lib` linking) or a full game
+server preset built this way; those pull in far more of the vendored SDKs'
+own build assumptions and haven't been exercised against this toolchain.
 
 ## Design
 
