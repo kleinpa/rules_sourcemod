@@ -13,6 +13,7 @@ load(
     "DISABLED_PLUGINS",
     "PLUGINS_WITH_PARTS",
 )
+load("@rules_sourcemod//sourcemod:rename.bzl", "rename_shared_lib")
 load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
 load("@rules_sourcemod//spcomp:plugin.bzl", "sourcemod_plugin")
 load(
@@ -200,17 +201,24 @@ cc_library(
 
 # The SourcePawn runtime, as the shared library the server dlopens.
 #
-# SourceMod's core opens `addons/sourcemod/bin/x64/sourcepawn.vm.so` during
-# startup (SOURCEPAWN_DLL in core/sourcemod.cpp) and resolves
-# GetSourcePawnFactory out of it; without the file, core refuses to start and
-# MetaMod reports "Failed to load plugin addons/sourcemod/bin/sourcemod_mm",
-# which is indistinguishable from SourceMod not being installed at all.
+# SourceMod's core resolves GetSourcePawnFactory out of a file it names
+# itself at compile time (SOURCEPAWN_DLL in core/sourcemod.cpp): "sourcepawn.
+# jit.x86" when KE_ARCH_X86 is defined (every 32-bit build -- x86_32 Linux
+# and Windows alike, which is all this repo's presets actually ship), else
+# "sourcepawn.vm" (64-bit). Without a file at the exact name core goes
+# looking for, core refuses to start and MetaMod reports "Failed to load
+# plugin addons/sourcemod/bin/sourcemod_mm: Module not found. (failed to
+# load bin/sourcepawn.jit.x86.dll)" -- which reads as SourceMod not being
+# installed at all, not a missing dependency of it. Confirmed against a real
+# server: the "sm" console command it registers never appeared, and this was
+# the entire reason -- no other change was needed once this file carried the
+# name core actually asks for.
 #
 # Same code as is linked into spcomp, plus dll_exports.cpp -- upstream's
 # vm/AMBuilder builds that file only into the shared module, since it carries
 # the exported factory function and the module's operator new/delete.
 cc_binary(
-    name = "sourcepawn_vm_shared",
+    name = "_sourcepawn_vm_shared_bin",
     srcs = ["sourcepawn/vm/dll_exports.cpp"],
     copts = _SPCOMP_COPTS,
     defines = _SPCOMP_DEFINES,
@@ -221,10 +229,25 @@ cc_binary(
         "//conditions:default": ["-lpthread"],
     }),
     linkshared = True,
+    visibility = ["//visibility:private"],
     deps = [
         ":sourcepawn_internal_headers",
         ":sourcepawn_vm",
     ],
+)
+
+# Renamed to sourcepawn.jit.x86.<so|dll> (32-bit) or sourcepawn.vm.<so|dll>
+# (64-bit) -- see rename_shared_lib's docstring for why a plain cc_binary
+# output can't be consumed directly (Windows also produces an import .lib
+# alongside the .dll among the same target's files), and the comment on
+# _sourcepawn_vm_shared_bin above for why the name itself isn't arbitrary.
+rename_shared_lib(
+    name = "sourcepawn_vm_shared",
+    binary = ":_sourcepawn_vm_shared_bin",
+    filename = select({
+        "@rules_sourcemod//platforms:x86_64": "sourcepawn.vm",
+        "//conditions:default": "sourcepawn.jit.x86",
+    }),
 )
 
 # The compiler front end, .smx writer, and amtl's argument parser.

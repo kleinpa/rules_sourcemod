@@ -12,9 +12,9 @@ its own directory, where <extension> is the branch's manifest `extension` field
 -- `2.css`, `2.tf2` -- so the file name is an interface, not a label.
 """
 
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+load("@rules_sourcemod//sourcemod:rename.bzl", "rename_shared_lib")
+load("@rules_sourcemod//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS", "UPSTREAM_WINDOWS_LINKOPTS")
 
 # Translated from `configure_cxx()` in the AMBuildScript. The POSIX set maps the
 # MSVC-spelled string functions the sources call to their C equivalents; without
@@ -40,18 +40,28 @@ PLATFORM_DEFINES = select({
 })
 
 CORE_COPTS = select({
-    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-"],
-    # c++14, not this repo's usual c++17 (see sourcemod/server.bzl's
-    # _COPTS_COMMON): upstream's own AMBuildScript (configure_gcc()) targets
-    # c++14 for Metamod specifically -- unlike SourceMod's separately
-    # versioned build, which genuinely does target c++17. Metamod's loader
-    # still has a `for (register size_t i = ...)` (loader/utility.cpp,
-    # upstream, not ours to fix): under c++14 that's merely deprecated, and
-    # UPSTREAM_WARNING_COPTS' `-Wno-register` (also upstream's own flag)
-    # silences the deprecation warning -- but under ISO c++17 `register`
-    # isn't deprecated, it's removed from the grammar, a hard error
-    # -Wno-register cannot suppress no matter how permissive the rest of the
-    # warning configuration is.
+    # /std:c++14, not the toolchain's own default of /std:c++17 (both this
+    # cross-compiling clang-cl toolchain, registered with cxx_standard =
+    # "c++17" in MODULE.bazel's llvm.toolchain() call, and presumably a
+    # native MSVC autoconfiguration on Windows -- rules_cc's msvc-cl feature
+    # config defaults there too): upstream's own AMBuildScript
+    # (configure_gcc()/configure_msvc(); hl2sdk-manifests carries
+    # SourceMod's copy, Metamod its own inline one) targets c++14 for
+    # Metamod specifically, unlike sourcemod/server.bzl's _COPTS_COMMON,
+    # which is SourceMod's own, separately-versioned AMBuildScript and
+    # genuinely does target c++17 (so is left on the toolchain default).
+    # Metamod's loader still has a `for (register size_t i = ...)`
+    # (loader/utility.cpp, upstream, not ours to fix): under c++14 that's
+    # merely deprecated, and UPSTREAM_WARNING_COPTS' `-Wno-register` (also
+    # upstream's own flag) silences the deprecation warning -- but under
+    # ISO c++17 `register` isn't deprecated, it's removed from the grammar,
+    # a hard error `-Wno-register` cannot suppress no matter how permissive
+    # the rest of the warning configuration is. The mismatch went unnoticed
+    # until something actually built this loader through a strict-C++17
+    # toolchain: @rules_cc//cc/compiler:msvc-cl does match this one, so an
+    # earlier attempt at this fix that only touched the "//conditions:
+    # default" branch below silently never took effect.
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++14", "/W3", "/EHsc", "/GR-"],
     "//conditions:default": [
         "-std=c++14",
         "-fPIC",
@@ -162,12 +172,13 @@ def _metamod_core(branch, extension):
     cc_binary(
         name = "_metamod_core_{}_so".format(branch),
         linkshared = True,
+        linkopts = UPSTREAM_WINDOWS_LINKOPTS,
         deps = [":_metamod_core_{}_lib".format(branch)],
         visibility = ["//visibility:private"],
     )
 
-    copy_file(
+    rename_shared_lib(
         name = "metamod_core_{}".format(branch),
-        src = ":_metamod_core_{}_so".format(branch),
-        out = "metamod.{}.so".format(extension),
+        binary = ":_metamod_core_{}_so".format(branch),
+        filename = "metamod.{}".format(extension),
     )

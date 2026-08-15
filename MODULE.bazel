@@ -9,7 +9,7 @@ module(
     version = "1.0.0",
 )
 
-bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 
@@ -56,4 +56,93 @@ hl2sdk.branch(name = "css")
 hl2sdk.branch(name = "tf2")
 hl2sdk.branch(name = "l4d2")
 hl2sdk.branch(name = "sdk2013")
-use_repo(hl2sdk, "hl2sdk_css", "hl2sdk_tf2", "hl2sdk_l4d2", "hl2sdk_sdk2013", "metamod_source")
+hl2sdk.branch(name = "ep1")
+use_repo(hl2sdk, "hl2sdk_css", "hl2sdk_ep1", "hl2sdk_l4d2", "hl2sdk_sdk2013", "hl2sdk_tf2", "metamod_source")
+
+# ---------------------------------------------------------------------------
+# Cross-compiling for 32-bit Windows (srcds.exe on Windows, like on Linux, is
+# 32-bit -- see platforms/BUILD.bazel) from a Linux host, via clang-cl/lld-link
+# targeting i686-pc-windows-msvc.
+#
+# toolchains_llvm has no Windows target support as of 1.8.0: tracked upstream
+# in bazel-contrib/toolchains_llvm#395, #390, #642, all open. #642 -- the most
+# complete attempt -- adds x86_64/aarch64 only and its own description calls
+# out Linux -> Windows cross-compilation as broken ("sysroot is not being
+# wired properly"). patches/toolchains_llvm-windows-i686.patch adds a
+# self-contained Windows/clang-cl code path for exactly this repo's case
+# (Linux exec, i686-pc-windows-msvc target) as an isolated branch that does
+# not touch any of the existing (tested) Unix/Darwin toolchain generation.
+# See the patch itself and windows/xwin_sysroot.bzl for the full rationale,
+# including two more bugs (unrelated to #642) hit and worked around while
+# getting a real cross-compiled binary to link.
+#
+# Deliberately NOT registered as a default toolchain (`register_toolchains`)
+# -- that would shift this machine's own native builds onto clang for no
+# reason, and the sysroot fetch below has a real licensing/network cost that
+# a plain `bazel build //...` shouldn't pay unasked. Opt in per build:
+#
+#   bazel build --platforms=//platforms:windows_x86_32 \
+#       --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows \
+#       //...
+# toolchains_llvm's own `llvm` extension refuses to be used by any module
+# other than the build's current root ("Only the root module can use the
+# 'llvm' extension") -- so every bazel_dep/use_extension/tag call in this
+# section is marked dev_dependency = True, which bzlmod drops entirely when
+# this module is consumed as a dependency rather than built as root. Without
+# that, merely depending on rules_sourcemod for anything -- Linux-only
+# extension building included -- would break any consumer's build the
+# moment its own MODULE.bazel graph got resolved, whether or not that
+# consumer ever touches a Windows target. A consumer that wants this same
+# toolchain (e.g. hiddensource-server) sets up its own copy of this block as
+# the root of its own build; there's no way to share this module's instance
+# of it across the dev_dependency boundary, and rules_sourcemod's own
+# targets don't care which toolchain instance answers toolchain resolution
+# for a windows_x86_32 target, only that the constraints match.
+# ---------------------------------------------------------------------------
+bazel_dep(name = "toolchains_llvm", version = "1.8.0", dev_dependency = True)
+single_version_override(
+    module_name = "toolchains_llvm",
+    patch_strip = 1,
+    patches = ["//patches:toolchains_llvm-windows-i686.patch"],
+    version = "1.8.0",
+)
+
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+
+# Pinned to an LLVM release new enough for the MSVC STL headers xwin fetches
+# to accept the compiler -- their own version gate (_EMIT_STL_ERROR) rejected
+# LLVM 18 during testing; 22.1.8 is the latest stable release as of this
+# writing. LLVM.org stopped publishing the older, much smaller
+# "clang+llvm-<ver>-x86_64-linux-gnu-*.tar.xz" release packaging after LLVM
+# 18, hence the explicit urls/sha256/strip_prefix below instead of just
+# `llvm_version` picking a bucketed release.
+llvm.toolchain(
+    name = "llvm_toolchain_windows_x86_32",
+    llvm_versions = {"": "22.1.8"},
+    sha256 = {"": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"},
+    strip_prefix = {"": "LLVM-22.1.8-Linux-X64"},
+    urls = {"": ["https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz"]},
+)
+llvm.sysroot(
+    name = "llvm_toolchain_windows_x86_32",
+    label = "@windows_x86_32_sysroot//sysroot",
+    targets = ["windows-x86_32"],
+)
+use_repo(llvm, "llvm_toolchain_windows_x86_32")
+
+xwin_sysroot = use_repo_rule("//windows:xwin_sysroot.bzl", "xwin_sysroot")
+
+# Downloads the Microsoft Windows SDK and MSVC++ Runtime via xwin
+# (github.com/Jake-Shadle/xwin) under Microsoft's own distribution terms --
+# see windows/xwin_sysroot.bzl and https://github.com/Jake-Shadle/xwin#license.
+# `accept_license = True` is this module's acknowledgment of that. Like the
+# rest of this section, it is only fetched (and so only then does that
+# acknowledgment take on any weight) when a build actually asks for the
+# windows_x86_32 toolchain above. dev_dependency for the same reason as the
+# rest of this section -- see the comment at its start.
+xwin_sysroot(
+    name = "windows_x86_32_sysroot",
+    accept_license = True,
+    arch = "x86",
+    dev_dependency = True,
+)

@@ -120,6 +120,12 @@ build_test(
     targets = ["//sourcemod:sourcemod_sdk2013"],
 )
 
+build_test(
+    name = "sourcemod_ep1_builds_test",
+    tags = ["manual"],
+    targets = ["//sourcemod:sourcemod_ep1"],
+)
+
 test_suite(
     name = "tests",
     tests = [
@@ -148,6 +154,7 @@ test_suite(
     tags = ["manual"],
     tests = [
         ":sourcemod_cstrike_builds_test",
+        ":sourcemod_ep1_builds_test",
         ":sourcemod_l4d2_builds_test",
         ":sourcemod_sdk2013_builds_test",
         ":sourcemod_tf2_builds_test",
