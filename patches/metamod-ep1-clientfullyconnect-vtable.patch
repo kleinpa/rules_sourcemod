@@ -1,0 +1,12 @@
+--- a/loader/serverplugin.cpp	2026-08-16 00:47:20.454838077 -0400
++++ b/loader/serverplugin.cpp	2026-08-16 00:50:59.385919991 -0400
+@@ -140,7 +140,8 @@
+ 			&& mm_backend != MMBackend_DOI
+ 			&& mm_backend != MMBackend_CSGO
+ 			&& mm_backend != MMBackend_MCV
+-			&& mm_backend != MMBackend_DOTA)
++			&& mm_backend != MMBackend_DOTA
++			&& mm_backend != MMBackend_Episode1)
+ 		{
+ 			SourceHook::MemFuncInfo mfp_fconnect;
+ 			mfp_fconnect.isVirtual = false;

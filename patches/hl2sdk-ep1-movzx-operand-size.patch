@@ -1,0 +1,29 @@
+--- a/public/mathlib/math_base.h	2026-08-15 23:01:12.155456602 -0400
++++ b/public/mathlib/math_base.h	2026-08-15 23:01:12.158120619 -0400
+@@ -1080,7 +1080,7 @@
+    {
+       fld    a					// push 'a' onto the FP stack
+       fnstcw CtrlwdHolder		// store FPU control word
+-      movzx  eax, CtrlwdHolder	// move and zero extend word into eax
++      movzx  eax, word ptr CtrlwdHolder	// move and zero extend word into eax
+       and    eax, 0xFFFFF3FF	// set all bits except rounding bits to 1
+       or     eax, 0x00000C00	// set rounding mode bits to round down
+       mov    CtrlwdSetter, eax	// Prepare to set the rounding mode -- prepare to enter plaid!
+@@ -1108,7 +1108,7 @@
+    {
+       fld    a					// push 'a' onto the FP stack
+       fnstcw CtrlwdHolder		// store FPU control word
+-      movzx  eax, CtrlwdHolder	// move and zero extend word into eax
++      movzx  eax, word ptr CtrlwdHolder	// move and zero extend word into eax
+       and    eax, 0xFFFFF3FF	// set all bits except rounding bits to 1
+       or     eax, 0x00000400	// set rounding mode bits to round down
+       mov    CtrlwdSetter, eax	// Prepare to set the rounding mode -- prepare to enter plaid!
+@@ -1157,7 +1157,7 @@
+    {
+       fld    a					// push 'a' onto the FP stack
+       fnstcw CtrlwdHolder		// store FPU control word
+-      movzx  eax, CtrlwdHolder	// move and zero extend word into eax
++      movzx  eax, word ptr CtrlwdHolder	// move and zero extend word into eax
+       and    eax, 0xFFFFF3FF	// set all bits except rounding bits to 1
+       or     eax, 0x00000800	// set rounding mode bits to round down
+       mov    CtrlwdSetter, eax	// Prepare to set the rounding mode -- prepare to enter plaid!

@@ -1,0 +1,61 @@
+--- a/core/sourcehook/sh_memfuncinfo.h	2026-08-16 01:20:31.421115342 -0400
++++ b/core/sourcehook/sh_memfuncinfo.h	2026-08-16 02:00:16.048524383 -0400
+@@ -93,7 +93,57 @@
+ 				// Check where it'd jump
+ 				addr += 5 /*size of the instruction*/ + *(unsigned long*)(addr + 1);
+ 			}
+-	
++
++			// clang-cl (this project's cross-compiling toolchain -- see
++			// windows/xwin_sysroot.bzl) doesn't fold a thiscall thunk down
++			// to the compact 2-instruction form above even at -O2; it keeps
++			// a full stack frame and reloads `this` through it, then loads
++			// the vtable slot into eax *before* the tail jmp, rather than
++			// jumping through the vtable slot directly:
++			//   55                push ebp
++			//   89 e5             mov  ebp, esp
++			//   50                push eax
++			//   89 4d fc          mov  [ebp-4], ecx
++			//   8b 4d fc          mov  ecx, [ebp-4]
++			//   8b 01             mov  eax, [ecx]
++			//   8b 00             mov  eax, [eax]            (vtable slot 0, no displacement)
++			//                     or 8b 40 xx                (slot 1-63, imm8 displacement)
++			//                     or 8b 80 + imm32           (slot 64+, imm32 displacement)
++			//   83 c4 04          add  esp, 4
++			//   5d                pop  ebp
++			//   ff e0             jmp  eax
++			// Once the offset-carrying `mov eax, [eax+offset]` is found
++			// there's nothing left to verify -- the trailing register jmp
++			// doesn't encode anything sh_memfuncinfo needs -- so this reads
++			// the offset and returns without falling into the pattern
++			// matching below, which never recognizes this shape (it only
++			// knows the compact jmp-through-memory form real MSVC and GCC
++			// emit) and was silently reporting every such function as
++			// non-virtual instead of erroring, corrupting whatever manual
++			// hook was configured from it. The zero-displacement form (slot
++			// 0) is the one that actually bit hardest: it's what a single-
++			// virtual-method wrapper class's own vtable thunk compiles to
++			// (SHINT_MAKE_HOOKMANPUBFUNC's `GetFuncInfo(&SH_FHCls<...>::Func,
++			// ...)`, reached by every SH_ADD_HOOK/SH_DECL_HOOK* callsite, not
++			// just a manual hook) -- confirmed with a minimal SourceHook-only
++			// repro outside the full engine (TheWall::Func2 in
++			// testmanual.cpp): the hook installed without error, but invoking
++			// it jumped through a null vtable slot, because this same
++			// 0x8B,0x00 shape at vtable index 0 was silently misread as
++			// "not virtual" here too.
++			if (addr[0] == 0x55 && addr[1] == 0x89 && addr[2] == 0xE5 && addr[3] == 0x50 &&
++				addr[4] == 0x89 && addr[5] == 0x4D && addr[6] == 0xFC && addr[7] == 0x8B &&
++				addr[8] == 0x4D && addr[9] == 0xFC && addr[10] == 0x8B && addr[11] == 0x01)
++			{
++				unsigned char *p = addr + 12;
++				if (p[0] == 0x8B && p[1] == 0x00)
++					return 0;
++				else if (p[0] == 0x8B && p[1] == 0x40)
++					return p[2] / SH_PTRSIZE;
++				else if (p[0] == 0x8B && p[1] == 0x80)
++					return *(unsigned long*)(p + 2) / SH_PTRSIZE;
++			}
++
+ 			// Check whether it's a virtual function call
+ 			// They look like this:
+ 			// 004125A0 8B 01            mov         eax,dword ptr [ecx] 

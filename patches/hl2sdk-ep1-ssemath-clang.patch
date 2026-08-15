@@ -1,0 +1,74 @@
+--- a/public/mathlib/ssemath.h	2026-08-15 23:24:29.369140263 -0400
++++ b/public/mathlib/ssemath.h	2026-08-15 23:24:29.372765721 -0400
+@@ -12,7 +12,7 @@
+ #include <xmmintrin.h>
+ #include <vector.h>
+ 
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ typedef int int32;
+ typedef union __attribute__ ((aligned (16)))
+  {
+@@ -170,7 +170,7 @@
+ 	// X(),Y(),Z() - get at the desired component of the i'th (0..3) vector.
+ 	inline float const &X(int idx) const
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&x)->m128_f32[idx];
+ #else
+ 		return x.m128_f32[idx];
+@@ -179,7 +179,7 @@
+ 
+ 	inline float const &Y(int idx) const
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&y)->m128_f32[idx];
+ #else
+ 		return y.m128_f32[idx];
+@@ -187,7 +187,7 @@
+ 	}
+ 	inline float const &Z(int idx) const
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&z)->m128_f32[idx];
+ #else
+ 		return z.m128_f32[idx];
+@@ -197,7 +197,7 @@
+ 	// X(),Y(),Z() - get at the desired component of the i'th (0..3) vector.
+ 	inline float &X(int idx)
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&x)->m128_f32[idx];
+ #else
+ 		return x.m128_f32[idx];
+@@ -206,7 +206,7 @@
+ 
+ 	inline float &Y(int idx)
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&y)->m128_f32[idx];
+ #else
+ 		return y.m128_f32[idx];
+@@ -214,7 +214,7 @@
+ 	}
+ 	inline float &Z(int idx)
+ 	{
+-#ifdef _LINUX
++#if !defined(_MSC_VER) || defined(__clang__)
+ 		return ((l_m128*)&z)->m128_f32[idx];
+ #else
+ 		return z.m128_f32[idx];
+@@ -370,7 +370,7 @@
+ {
+ #ifdef _WIN32
+ 	static __declspec(align(16)) int32 signmask[4]=
+-		{0x80000000,0x80000000,0x80000000,0x80000000};
++		{(int32)0x80000000,(int32)0x80000000,(int32)0x80000000,(int32)0x80000000};
+ #elif _LINUX
+ 	static int32 signmask[4]  __attribute__ ((aligned (16)))=
+ 		{0x80000000,0x80000000,0x80000000,0x80000000};

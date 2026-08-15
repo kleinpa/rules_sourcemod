@@ -1,0 +1,10 @@
+--- a/public/tier0/memalloc.h	2026-08-15 23:17:14.202968258 -0400
++++ b/public/tier0/memalloc.h	2026-08-15 23:17:14.214068020 -0400
+@@ -17,6 +17,7 @@
+ #if !defined(STEAM) && !defined(NO_MALLOC_OVERRIDE)
+ 
+ #include <stddef.h>
++#include "tier0/commonmacros.h"
+ #include "tier0/mem.h"
+ 
+ struct _CrtMemState;

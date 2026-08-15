@@ -1,0 +1,11 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "toolchains_llvm-windows-i686.patch",
+    "hl2sdk-ep1-movzx-operand-size.patch",
+    "hl2sdk-ep1-memalloc-include.patch",
+    "hl2sdk-ep1-ssemath-clang.patch",
+    "hl2sdk-ep1-mathlib-base-clang.patch",
+    "metamod-ep1-clientfullyconnect-vtable.patch",
+    "metamod-clang-thiscall-thunk.patch",
+])

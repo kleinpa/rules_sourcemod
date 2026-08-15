@@ -173,6 +173,16 @@ cc_library(
     # ...), an older SDK snapshot never having grown them. A hardcoded list
     # tuned to one branch's tree fails a "missing input file" for any branch
     # whose tree doesn't match it -- glob() tracks whatever's actually there.
+    #
+    # xboxstubs.cpp is excluded on every branch, not just the ones (ep1)
+    # where leaving it in actually breaks the build: branches new enough to
+    # predate AMBuild altogether (ep1) ship a separate tier1_xbox.vcproj for
+    # it precisely because it isn't part of the regular tier1 sources, and
+    # it `#include`s common/xbox/xboxstubs.h, which is reachable only
+    # through the "common" include path newer branches happen to carry but
+    # ep1's manifest does not (see the "ep1" entry in repositories.bzl).
+    # Branches where it silently compiled anyway were doing so by accident,
+    # not because tier1.lib is supposed to contain it.
     srcs = glob(
         ["tier1/*.cpp"],
         exclude = [
@@ -236,6 +246,14 @@ cc_library(
 # one, has no game/shared/**/*.inc. css and tf2 happen to have at least one
 # match for each pattern, which is why this was never a problem before there
 # was a second branch to build against.
+#
+# game_shared/**/*.h (no slash) is ep1's own tree, not a typo of game/
+# shared/ above: ep1 predates the game/shared convention (see the "ep1"
+# entry in repositories.bzl), and its include_paths entry of the same name
+# only adds the *directory* to the include path -- headers under it (e.g.
+# ehandle.h, which extensions/sdkhooks reaches through <ehandle.h>) still
+# need to be in this glob to be visible to the sandbox at all. Harmless
+# no-op for every other branch, none of which has a top-level game_shared/.
 cc_library(
     name = "hl2sdk_headers",
     hdrs = glob(
@@ -243,14 +261,6 @@ cc_library(
             "common/**/*.h",
             "game/shared/**/*.h",
             "game/shared/**/*.inc",
-            # ep1's own tree, not a typo of game/shared/ above: ep1 predates
-            # the game/shared convention (see the "ep1" entry in
-            # repositories.bzl), and its include_paths entry of the same
-            # name only adds the *directory* to the include path -- headers
-            # under it (e.g. ehandle.h, which extensions/sdkhooks reaches
-            # through <ehandle.h>) still need to be in this glob to be
-            # visible at all. Harmless no-op for every other branch, none
-            # of which has a top-level game_shared/.
             "game_shared/**/*.h",
             "game_shared/**/*.inc",
             "public/**/*.h",

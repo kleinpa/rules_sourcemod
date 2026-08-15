@@ -59,6 +59,33 @@ config_setting(
     ],
 )
 
+# Same, for OS: lets server.bzl's renames pick '.dll' vs '.so' with a plain
+# select() (a linkshared cc_binary's own outputs can't disambiguate that by
+# themselves -- see sourcemod/rename.bzl).
+config_setting(
+    name = "windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+# Metamod's own install layout (unlike SourceMod's own binaries above it,
+# which only vary by arch -- see server.bzl) additionally splits by OS on a
+# 64-bit target: addons/metamod/bin/{linux64,win64}/server.<so|dll>, vs. a
+# single addons/metamod/bin/server.<so|dll> shared by 32-bit Windows and
+# Linux alike. This is the more specific condition server.bzl's select()
+# checks before falling back to the plain `x86_64` one above for 64-bit
+# Linux -- Bazel resolves the overlap by specialization, the same way
+# hl2sdk.BUILD.bazel's tier0_import/vstdlib_import aliases do.
+#
+# Named distinctly from the `windows_x86_64` platform() below -- a
+# config_setting and a platform can't share a name in the same package.
+config_setting(
+    name = "is_windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
 platform(
     name = "linux_x86_32",
     constraint_values = [

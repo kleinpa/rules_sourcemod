@@ -11,7 +11,7 @@ done with `--platforms=@rules_sourcemod//platforms:linux_x86_32`, which drives t
 toolchain rather than smuggling an ABI flag into every compile action.
 """
 
-load("//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS")
+load("//sourcemod:warnings.bzl", "UPSTREAM_WARNING_COPTS", "UPSTREAM_WINDOWS_LINKOPTS")
 
 # Code generation and ABI only. The warning suppressions that used to be
 # repeated here now come from //sourcemod:warnings.bzl, which is the same set
@@ -49,9 +49,9 @@ EXTENSION_COPTS = select({
 # cc_library the consumer writes themselves -- already receives them.
 
 EXTENSION_LINKOPTS = select({
-    # The MSVC toolchain already links the common Win32 import libraries.
-    # Anything beyond that is extension-specific and belongs in the consuming
-    # target's `linkopts`.
+    # UPSTREAM_WINDOWS_LINKOPTS (added below) covers this platform; the
+    # flags in every other branch here are GCC/ld-only and not valid for
+    # MSVC/lld-link.
     "@platforms//os:windows": [],
     "@platforms//os:macos": ["-liconv"],
     "//conditions:default": [
@@ -64,4 +64,4 @@ EXTENSION_LINKOPTS = select({
         "-static-libstdc++",
         "-static-libgcc",
     ],
-})
+}) + UPSTREAM_WINDOWS_LINKOPTS
