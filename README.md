@@ -76,8 +76,19 @@ reference types, `VFormat()` is gone in favour of spreading `...` into
 `Format`, and so on (`docs/SourcePawn2.md` in the SourcePawn tree has the
 list); a script can test `#if defined __sourcepawn2` where the two differ.
 Upstream keeps the pre-2.0 compiler alive as `oldspcomp` and ships both, and
-so does this module (`@sourcemod_sdk//:oldspcomp`); the VM carries both
-bytecode generations and picks per `.smx`, so a server can run a mix.
+so does this module: the toolchain carries the two side by side, and a plugin
+that isn't ready for 2.0 asks for the old one itself:
+
+```starlark
+sourcemod_plugin(
+    name = "some_third_party_plugin",
+    src = "some_third_party_plugin.sp",
+    sourcepawn_version = "1",
+)
+```
+
+It's a per-plugin choice, not a per-server one, because the VM carries both
+bytecode generations and picks per `.smx` -- a server can run a mix.
 
 Both rules report their install path via rules_pkg's `PackageFilesInfo`, so
 they drop straight into a `pkg_tar`/`pkg_zip`:

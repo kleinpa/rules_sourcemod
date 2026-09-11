@@ -9,6 +9,7 @@ load(
     "package_info_test",
     "plugin_layout_test",
 )
+load(":sourcepawn_version_test.bzl", "plugin_compiler_test", "smx_version_test")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -29,6 +30,22 @@ sourcemod_extension(
 sourcemod_plugin(
     name = "test_plugin",
     src = "fixtures/test_plugin.sp",
+    tags = ["manual"],
+)
+
+# The same classic source through the pre-2.0 compiler, and source only the
+# 2.0 compiler accepts through the default. Between them and test_plugin
+# above, every combination a consumer can ask for that is supposed to work.
+sourcemod_plugin(
+    name = "test_plugin_legacy",
+    src = "fixtures/test_plugin.sp",
+    sourcepawn_version = "1",
+    tags = ["manual"],
+)
+
+sourcemod_plugin(
+    name = "test_plugin_sp2",
+    src = "fixtures/test_plugin_sp2.sp",
     tags = ["manual"],
 )
 
@@ -80,6 +97,46 @@ package_info_test(
     name = "plugin_reports_package_info_test",
     expected_dests = ["addons/sourcemod/plugins"],
     target_under_test = ":test_plugin",
+)
+
+# --- SourcePawn 1 and 2 ----------------------------------------------------
+#
+# See sourcepawn_version_test.bzl. The build_test is the coarse assertion --
+# each fixture compiles at all under the compiler it asks for, which for
+# test_plugin_sp2 is what proves the default really is the 2.0 compiler --
+# and the two finer ones check which compiler ran and what it emitted.
+
+build_test(
+    name = "sourcepawn_versions_build_test",
+    targets = [
+        ":test_plugin",
+        ":test_plugin_legacy",
+        ":test_plugin_sp2",
+    ],
+)
+
+plugin_compiler_test(
+    name = "default_plugin_uses_spcomp_test",
+    sourcepawn_version = "2",
+    target_under_test = ":test_plugin",
+)
+
+plugin_compiler_test(
+    name = "legacy_plugin_uses_oldspcomp_test",
+    sourcepawn_version = "1",
+    target_under_test = ":test_plugin_legacy",
+)
+
+smx_version_test(
+    name = "default_plugin_emits_sp2_bytecode_test",
+    plugin = ":test_plugin",
+    sourcepawn_version = "2",
+)
+
+smx_version_test(
+    name = "legacy_plugin_emits_sp1_bytecode_test",
+    plugin = ":test_plugin_legacy",
+    sourcepawn_version = "1",
 )
 
 # Compiles every built-in SourceMod plugin (sourcemod/plugins.bzl) through

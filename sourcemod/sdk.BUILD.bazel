@@ -332,8 +332,9 @@ cc_binary(
     ],
 )
 
-# The classic compiler, next to spcomp above (which is what SourceMod builds
-# its own plugins with).
+# The classic compiler. The toolchain carries it as `legacy_compiler`, next to
+# spcomp above (which is what SourceMod builds its own plugins with); a plugin
+# picks it with `sourcepawn_version = "1"`.
 cc_binary(
     name = "oldspcomp",
     srcs = ["sourcepawn/legacy-compiler/driver.cpp"],

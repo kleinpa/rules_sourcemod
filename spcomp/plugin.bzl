@@ -6,6 +6,15 @@ load("//sourcemod:providers.bzl", "SourceModPackageInfo", "package_providers")
 def _sourcemod_plugin_impl(ctx):
     toolchain = ctx.toolchains["//spcomp:toolchain_type"].spcomp
 
+    if ctx.attr.sourcepawn_version == "1":
+        compiler = toolchain.legacy_compiler
+        if not compiler:
+            fail("{}: sourcepawn_version = \"1\" needs a legacy compiler, and the ".format(ctx.label) +
+                 "registered spcomp toolchain does not provide one (see " +
+                 "`legacy_compiler` on spcomp_toolchain)")
+    else:
+        compiler = toolchain.compiler
+
     plugin_name = ctx.attr.plugin_name or ctx.label.name
     smx = ctx.actions.declare_file(plugin_name + ".smx")
     dest_dir = ctx.attr.dest_dir or "addons/sourcemod/plugins"
@@ -52,7 +61,7 @@ def _sourcemod_plugin_impl(ctx):
     )
 
     ctx.actions.run(
-        executable = toolchain.compiler,
+        executable = compiler,
         arguments = [args],
         inputs = inputs,
         outputs = [smx],
@@ -78,6 +87,9 @@ Example:
         src = "my_plugin.sp",
         includes = [":my_natives_inc"],
     )
+
+Compiled with SourcePawn 2's spcomp unless `sourcepawn_version = "1"` asks
+for the pre-2.0 compiler; see that attribute.
 """,
     attrs = {
         "src": attr.label(
@@ -104,6 +116,18 @@ These are placed in the sandbox but not passed to spcomp directly.""",
         "werror": attr.bool(
             doc = "Treat SourcePawn warnings as errors.",
             default = True,
+        ),
+        "sourcepawn_version": attr.string(
+            doc = """Which compiler, and so which bytecode generation, the plugin
+is built with. "2" (the default) is SourcePawn 2's spcomp, what SourceMod
+builds its own plugins with: it takes classic source too, but under 2.0's
+rules -- multi-dimensional arrays are heap-allocated reference types, VFormat()
+is gone, and so on -- and defines `__sourcepawn2`. "1" is the pre-2.0 compiler
+(oldspcomp) for a plugin that isn't ready for that. The server's VM runs both
+generations side by side, choosing per .smx, so this is a per-plugin choice
+rather than a per-server one.""",
+            default = "2",
+            values = ["1", "2"],
         ),
         "dest_dir": attr.string(
             doc = "Destination directory within the package (default: addons/sourcemod/plugins).",

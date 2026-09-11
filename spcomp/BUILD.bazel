@@ -4,11 +4,15 @@ package(default_visibility = ["//visibility:public"])
 
 toolchain_type(name = "toolchain_type")
 
-# The compiler is built from source by @sourcemod_sdk; this only wires it up as
-# the default implementation of the toolchain type above.
+# Both compilers are built from source by @sourcemod_sdk; this only wires them
+# up as the default implementation of the toolchain type above. Which one a
+# plugin gets is the plugin's own choice (`sourcepawn_version` on
+# sourcemod_plugin), so one toolchain carries both rather than there being one
+# per compiler that a build would have to pick between globally.
 spcomp_toolchain(
     name = "spcomp_impl",
     compiler = "@sourcemod_sdk//:spcomp",
+    legacy_compiler = "@sourcemod_sdk//:oldspcomp",
     stdlib_includes = "@sourcemod_sdk//:spcomp_stdlib_includes",
 )
 
