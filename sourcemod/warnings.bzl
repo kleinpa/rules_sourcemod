@@ -11,7 +11,7 @@ The list is upstream's own. `configure_gcc()` in SourceMod's AMBuildScript
 suppresses most of these, so it is the flag set the code was written against;
 building it with anything stricter is inventing a standard its authors never
 applied. The version gates upstream carries (`if cxx.version >= 'gcc-4.8'`) are
-dropped, since nothing that old can compile the C++17 this tree now requires.
+dropped, since nothing that old can compile the C++20 this tree now requires.
 
 These are GCC spellings, and only GCC's. Upstream supports both families and
 switches flags between them, but doing that here means maintaining two lists
@@ -54,6 +54,15 @@ _GCC = [
     # code using what C++17 deprecated, e.g. wstring_convert in the SourcePawn
     # compiler's codepage handling.
     "-Wno-deprecated-declarations",
+    # Upstream carries these two as -Wno-deprecated-volatile and
+    # -Wno-deprecated-anon-enum-enum-conversion, clang's names for what GCC
+    # calls -Wvolatile and -Wdeprecated-enum-enum-conversion: C++20
+    # deprecated `++`/`--`/compound assignment on volatile lvalues (P1152R4),
+    # which tier0's CThreadFastMutex does in every translation unit that
+    # includes threadtools.h, and arithmetic between two anonymous enums,
+    # which SourceMod's MersenneTwister.h does with its size constants.
+    "-Wno-volatile",
+    "-Wno-deprecated-enum-enum-conversion",
     #
     # Not in upstream's list, which predates the compilers that emit these.
     #

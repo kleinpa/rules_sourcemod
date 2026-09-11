@@ -96,9 +96,9 @@ _PRIVATE = ["//visibility:private"]
 # Compiler flags that mirror SM's own AMBuilder configuration for server
 # components (MMS.Library / SM.Library / SM.HL2Library / SM.HL2ExtConfig).
 _COPTS_COMMON = select({
-    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-", "/std:c++20"],
     "//conditions:default": [
-        "-std=c++17",
+        "-std=c++20",
         "-fPIC",
         "-fno-strict-aliasing",
         "-fno-rtti",

@@ -10,14 +10,28 @@ which cloned SourceMod at HEAD and produced unreproducible builds.
 See "Upgrading SourceMod" in README.md for the bump procedure.
 """
 
-# SourceMod release tag `1.13.0.7439` in alliedmodders/sourcemod.
-_SOURCEMOD_COMMIT = "a36a44998370a738b0d34d927fbdd630a0ae11ad"
+# SourceMod release tag `1.13.0.7461` in alliedmodders/sourcemod.
+_SOURCEMOD_COMMIT = "809392d1dc0436b064f1d2d03cc498551f2a97b9"
 
 # Submodule SHAs recorded by the SourceMod tree at _SOURCEMOD_COMMIT. These are
 # read straight from the gitlink entries, so the header set matches exactly what
 # upstream's own `checkout-deps.sh` would have produced.
-_AMTL_COMMIT = "44e73d48620c6f880d4243fdeb51e8160b379a9b"
-_SOURCEPAWN_COMMIT = "f2d11ff1a80ac891b7fb7ba81ad78646d9232c3e"
+_AMTL_COMMIT = "03506b678bc5838d958b8d51d2f9bee19b1edd6d"
+_SOURCEPAWN_COMMIT = "672b2cda216d7543e12fe3ce03201cd537162a8f"
+
+# mimalloc, a submodule of SourcePawn at third_party/mimalloc -- AlliedModders'
+# own fork, not upstream microsoft/mimalloc, since the VM calls into fork-only
+# entry points (mi_theap_*, src/theap.c). SourcePawn 2's heap
+# (vm/heap.cpp, vm/objects.cpp, vm/virtmem-*.cpp) is built on it, so it is
+# linked into everything that carries the VM: spcomp, oldspcomp, and
+# sourcemod.logic.so. Read from the gitlink at _SOURCEPAWN_COMMIT
+# (`git ls-tree <commit> third_party/mimalloc` in alliedmodders/sourcepawn).
+#
+# SourcePawn's other submodules are not fetched: third_party/amtl is the same
+# amtl the SDK already lays down at public/amtl (SourceMod's build points the
+# compiler at that copy too), third_party/capstone is only used by smxdump,
+# and third_party/gtest only by the test suite, none of which are built here.
+_MIMALLOC_COMMIT = "ada6b76fb1f56a55f6c065ece255f15e9abe6c97"
 
 # safetyhook, a submodule at public/safetyhook. CDetour's detours.h includes
 # <safetyhook.hpp>, so any extension using CDetour (sdktools, cstrike) needs it.
@@ -56,14 +70,24 @@ def _sourcemod_sdk_impl(repository_ctx):
         stripPrefix = "amtl-" + _AMTL_COMMIT,
     )
 
-    # SourcePawn, a submodule at sourcepawn. Carries the compiler, the VM, and a
-    # vendored zlib.
+    # SourcePawn, a submodule at sourcepawn. Carries both compilers (spcomp and
+    # the legacy oldspcomp), the VM, and a vendored zlib.
     repository_ctx.download_and_extract(
         url = "https://github.com/alliedmodders/sourcepawn/archive/{}.tar.gz".format(
             _SOURCEPAWN_COMMIT,
         ),
         output = "sourcepawn",
         stripPrefix = "sourcepawn-" + _SOURCEPAWN_COMMIT,
+    )
+
+    # mimalloc, a submodule of SourcePawn at third_party/mimalloc. See
+    # _MIMALLOC_COMMIT.
+    repository_ctx.download_and_extract(
+        url = "https://github.com/alliedmodders/mimalloc/archive/{}.tar.gz".format(
+            _MIMALLOC_COMMIT,
+        ),
+        output = "sourcepawn/third_party/mimalloc",
+        stripPrefix = "mimalloc-" + _MIMALLOC_COMMIT,
     )
 
     # safetyhook, a submodule at public/safetyhook. See _SAFETYHOOK_COMMIT.

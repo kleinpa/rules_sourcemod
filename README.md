@@ -8,7 +8,8 @@ game server image — plugins, extensions, and the SourceMod runtime itself,
 packaged to drop into a server directory. It contains four components:
 
 - **Bazel rules for the SourcePawn language**, with `spcomp` built from source
-  and registered as a real toolchain.
+  and registered as a real toolchain (and the pre-2.0 `oldspcomp` alongside
+  it, for plugins that need it).
 - **Macros for building C++ SourceMod extensions**, using the standard Bazel
   C++ toolchain.
 - **Presets that build the SourceMod and Metamod addon layer** — every binary
@@ -67,6 +68,16 @@ sourcemod_extension(
     deps = [":core"],
 )
 ```
+
+`sourcemod_plugin` compiles with SourcePawn 2's `spcomp`, the same compiler
+SourceMod builds its own bundled plugins with. It still takes the classic
+language, but under 2.0's rules: multi-dimensional arrays are heap-allocated
+reference types, `VFormat()` is gone in favour of spreading `...` into
+`Format`, and so on (`docs/SourcePawn2.md` in the SourcePawn tree has the
+list); a script can test `#if defined __sourcepawn2` where the two differ.
+Upstream keeps the pre-2.0 compiler alive as `oldspcomp` and ships both, and
+so does this module (`@sourcemod_sdk//:oldspcomp`); the VM carries both
+bytecode generations and picks per `.smx`, so a server can run a mix.
 
 Both rules report their install path via rules_pkg's `PackageFilesInfo`, so
 they drop straight into a `pkg_tar`/`pkg_zip`:
@@ -181,7 +192,8 @@ l4d2 and sdk2013 are 32-bit only; see Design below.
   a 64-bit target platform, so a wildcard 64-bit build skips them instead of
   failing inside the SDK.
 - **spcomp is built from source** and registered as a real toolchain, not
-  invoked by path — see `spcomp/sources.bzl`.
+  invoked by path — see `spcomp/sources.bzl`. So is `oldspcomp`, from the
+  `legacy-compiler/` directory of the same SourcePawn tree.
 
 ## Reproducibility
 
@@ -223,9 +235,18 @@ $ bazel test //tests:game_server_tests
 ## Upgrading SourceMod
 
 1. Pick a tag from [alliedmodders/sourcemod](https://github.com/alliedmodders/sourcemod/tags).
-2. Read the submodule SHAs it records: `git ls-tree <tag> public/amtl sourcepawn`
+2. Read the submodule SHAs it records:
+   `git ls-tree <tag> public/amtl public/safetyhook sourcepawn`, then
+   SourcePawn's own: `git ls-tree <sourcepawn sha> third_party/mimalloc` in
+   alliedmodders/sourcepawn.
 3. Update the pins at the top of `sourcemod/repositories.bzl`.
-4. Diff the compiler's source lists against upstream's AMBuilder files
-   (`compiler/`, `libsmx/`, `vm/`) and update `spcomp/sources.bzl` if files
-   were added or removed.
-5. `bazel test //...`
+4. Diff the source lists against upstream's AMBuild files (`compiler/`,
+   `legacy-compiler/`, `libsmx/`, `utils/`, `vm/`, and
+   `third_party/AMBuild.mimalloc`) and update `spcomp/sources.bzl` if files
+   were added or removed. Check `AMBuildScript` in both trees for a changed
+   `-std=` or new defines.
+5. If upstream's `AMBuildScript` gained a compiler flag, the HL2SDK branches
+   may have gained matching fixes: SourceMod compiles the SDK headers with
+   its own flags, so a language-standard bump there can need a newer branch
+   head in `hl2sdk/repositories.bzl` (C++20 did, for `tf2`).
+6. `bazel test //...`

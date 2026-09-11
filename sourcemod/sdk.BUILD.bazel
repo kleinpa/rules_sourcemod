@@ -19,8 +19,15 @@ load(
     "@rules_sourcemod//spcomp:sources.bzl",
     "SPCOMP_AMTL_SRCS",
     "SPCOMP_COMPILER_SRCS",
+    "SPCOMP_LEGACY_COMPILER_SRCS",
     "SPCOMP_LIBSMX_SRCS",
+    "SPCOMP_MIMALLOC_SRCS",
+    "SPCOMP_UTILS_SRCS",
+    "SPCOMP_UTILS_SRCS_LINUX",
     "SPCOMP_VM_SRCS",
+    "SPCOMP_VM_SRCS_MACOS",
+    "SPCOMP_VM_SRCS_POSIX",
+    "SPCOMP_VM_SRCS_WINDOWS",
     "SPCOMP_VM_SRCS_X86",
     "SPCOMP_VM_SRCS_X86_64",
 )
@@ -85,11 +92,12 @@ cc_library(
 )
 
 # ---------------------------------------------------------------------------
-# SourcePawn compiler (spcomp), built from source.
+# SourcePawn compilers (spcomp and oldspcomp), built from source.
 #
-# Everything below produces the .sp -> .smx compiler. It is a build tool, so it
-# is always built for the execution platform; see spcomp/sources.bzl for why
-# that also determines which VM backend is compiled.
+# Everything below produces the .sp -> .smx compilers. They are build tools,
+# so they are always built for the execution platform; see spcomp/sources.bzl
+# for why that also determines which VM backend is compiled, and for what
+# distinguishes the two.
 # ---------------------------------------------------------------------------
 
 # zlib, vendored in the SourcePawn tree. spcomp uses it to compress the code
@@ -116,7 +124,49 @@ cc_library(
     ],
 )
 
-# `sourcemod_version.h`, which the compiler includes for its version banner.
+# mimalloc, vendored in the SourcePawn tree as a submodule (see
+# _MIMALLOC_COMMIT in @rules_sourcemod//sourcemod:repositories.bzl). The
+# SourcePawn 2 heap is built on it, so it goes wherever the VM goes.
+#
+# MI_STATIC_LIB is what upstream's AMBuild.mimalloc sets: without it
+# mimalloc's headers declare its API with shared-library export attributes.
+# The textual_hdrs are the translation units mimalloc's own build never
+# compiles directly -- they are `#include`d by the sibling listed in
+# SPCOMP_MIMALLOC_SRCS -- plus its internal headers. Everything under src/
+# goes in rather than a hand-picked list, since which .c includes which is
+# mimalloc's business and changes between its releases; listing them as
+# textual headers costs nothing, as nothing is compiled from here.
+#
+# Warnings are silenced outright (-w, /w) as upstream does: it is third-party
+# C built with SourcePawn's -Werror, and this module's own suppression set
+# (//sourcemod:warnings.bzl) is tuned to SourceMod's C++, not to it.
+cc_library(
+    name = "mimalloc",
+    srcs = SPCOMP_MIMALLOC_SRCS,
+    hdrs = glob(
+        ["sourcepawn/third_party/mimalloc/include/**/*.h"],
+        allow_empty = False,
+    ),
+    textual_hdrs = glob(
+        [
+            "sourcepawn/third_party/mimalloc/src/**/*.c",
+            "sourcepawn/third_party/mimalloc/src/**/*.h",
+        ],
+        exclude = SPCOMP_MIMALLOC_SRCS,
+        allow_empty = False,
+    ),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    defines = ["MI_STATIC_LIB"],
+    includes = [
+        "sourcepawn/third_party/mimalloc/include",
+        "sourcepawn/third_party/mimalloc/src",
+    ],
+)
+
+# `sourcemod_version.h`, which the compilers include for their version banner.
 # The version is read from the fetched tree's product.version at repository
 # setup time; the header is written from Starlark, so this needs neither Python
 # nor a shell (see spcomp/version.bzl).
@@ -131,13 +181,17 @@ cc_library(
     includes = ["generated"],
 )
 
-# Headers shared between the compiler and the VM.
+# Headers shared between the compilers and the VM. Both compiler directories
+# are in here even though no binary links both: they carry files of the same
+# names and each includes its own by bare `"lexer.h"`-style quotes, which the
+# preprocessor resolves against the including file's directory first, so
+# nothing crosses over.
 cc_library(
     name = "sourcepawn_internal_headers",
     hdrs = glob(
         [
             "sourcepawn/compiler/**/*.h",
-            "sourcepawn/compiler/**/*-inl.h",
+            "sourcepawn/legacy-compiler/**/*.h",
             "sourcepawn/libsmx/*.h",
             "sourcepawn/utils/*.h",
             "sourcepawn/vm/**/*.h",
@@ -156,8 +210,8 @@ cc_library(
 )
 
 _SPCOMP_COPTS = select({
-    "@platforms//os:windows": ["/std:c++17"],
-    "//conditions:default": ["-std=c++17"],
+    "@platforms//os:windows": ["/std:c++20"],
+    "//conditions:default": ["-std=c++20"],
 }) + UPSTREAM_WARNING_COPTS
 
 # WIN32 is not predefined by MSVC (which spells it _WIN32); upstream's
@@ -183,17 +237,32 @@ _SPCOMP_DEFINES = select({
 # directly, so without alwayslink the linker would drop them as unreachable.
 cc_library(
     name = "sourcepawn_vm",
-    srcs = SPCOMP_VM_SRCS + select({
+    srcs = SPCOMP_VM_SRCS + SPCOMP_UTILS_SRCS + select({
+        "@platforms//os:linux": SPCOMP_UTILS_SRCS_LINUX,
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": SPCOMP_VM_SRCS_WINDOWS,
+        "@platforms//os:macos": SPCOMP_VM_SRCS_POSIX + SPCOMP_VM_SRCS_MACOS,
+        "//conditions:default": SPCOMP_VM_SRCS_POSIX,
+    }) + select({
         "@platforms//cpu:x86_32": SPCOMP_VM_SRCS_X86,
         "//conditions:default": SPCOMP_VM_SRCS_X86_64,
     }),
     copts = _SPCOMP_COPTS,
-    # SourcePawn's own AMBuildScript enables the JIT (has_jit) for both x86
-    # and x86_64 -- see spcomp/sources.bzl's SPCOMP_VM_SRCS_X86_64/
+    # SourcePawn's own AMBuildScript enables both JITs (SP_JIT_V1 for the
+    # classic bytecode, SP_JIT_V2 for SourcePawn 2's) for x86 and x86_64
+    # alike -- see spcomp/sources.bzl's SPCOMP_VM_SRCS_X86_64/
     # SPCOMP_VM_SRCS_X86 comment. Unconditional here rather than a select()
     # since every real (non-emscripten) target this module builds for
-    # wants it.
-    defines = _SPCOMP_DEFINES + ["SP_HAS_JIT"],
+    # wants them. SP_ARCH_STR is the VM's own name for the architecture,
+    # reported by `sm version`-style output; upstream spells 64-bit "x64".
+    defines = _SPCOMP_DEFINES + [
+        "SP_JIT_V1",
+        "SP_JIT_V2",
+    ] + select({
+        "@platforms//cpu:x86_32": ["SP_ARCH_STR=\\\"x86\\\""],
+        "//conditions:default": ["SP_ARCH_STR=\\\"x64\\\""],
+    }),
     alwayslink = True,
     # The VM's thread support needs pthread. Explicit because glibc only
     # folded libpthread into libc in 2.34: linking against an older sysroot
@@ -207,15 +276,17 @@ cc_library(
         "//conditions:default": ["-lpthread"],
     }),
     deps = [
+        ":mimalloc",
         ":sourcepawn_internal_headers",
         ":zlib",
     ],
 )
 
-# The compiler front end, .smx writer, and amtl's argument parser.
+# The .smx writer and amtl's argument parser -- the part of a compiler binary
+# that is the same for both compilers.
 cc_library(
-    name = "sourcepawn_compiler",
-    srcs = SPCOMP_COMPILER_SRCS + SPCOMP_LIBSMX_SRCS + SPCOMP_AMTL_SRCS,
+    name = "sourcepawn_compiler_common",
+    srcs = SPCOMP_LIBSMX_SRCS + SPCOMP_AMTL_SRCS,
     copts = _SPCOMP_COPTS,
     defines = _SPCOMP_DEFINES,
     deps = [
@@ -225,19 +296,53 @@ cc_library(
     ],
 )
 
+# The SourcePawn 2 compiler front end.
+cc_library(
+    name = "sourcepawn_compiler",
+    srcs = SPCOMP_COMPILER_SRCS,
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    deps = [":sourcepawn_compiler_common"],
+)
+
+# The pre-2.0 compiler front end, kept by upstream as `oldspcomp`.
+cc_library(
+    name = "sourcepawn_legacy_compiler",
+    srcs = SPCOMP_LEGACY_COMPILER_SRCS,
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    deps = [":sourcepawn_compiler_common"],
+)
+
+# Both drivers post window messages to notify an editor of build results.
+_SPCOMP_LINKOPTS = select({
+    "@platforms//os:windows": ["user32.lib"],
+    "//conditions:default": [],
+})
+
 cc_binary(
     name = "spcomp",
     srcs = ["sourcepawn/compiler/driver.cpp"],
     copts = _SPCOMP_COPTS,
     defines = _SPCOMP_DEFINES,
-    linkopts = select({
-        # driver.cpp posts window messages to notify an editor of build results.
-        "@platforms//os:windows": ["user32.lib"],
-        "//conditions:default": [],
-    }),
+    linkopts = _SPCOMP_LINKOPTS,
     deps = [
         ":sourcepawn_compiler",
         ":sourcepawn_internal_headers",
+    ],
+)
+
+# The classic compiler, next to spcomp above (which is what SourceMod builds
+# its own plugins with).
+cc_binary(
+    name = "oldspcomp",
+    srcs = ["sourcepawn/legacy-compiler/driver.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    linkopts = _SPCOMP_LINKOPTS,
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":sourcepawn_legacy_compiler",
     ],
 )
 
