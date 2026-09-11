@@ -1,7 +1,6 @@
 # rules_sourcemod
 
-> **Work in progress.** Only tested with 64-bit Linux builds. Builds are not
-> yet reproducible.
+> **Work in progress.** Only tested with 64-bit Linux builds.
 
 A toolkit for building the [SourceMod](https://www.sourcemod.net/) side of a
 game server image — plugins, extensions, and the SourceMod runtime itself,
@@ -42,7 +41,7 @@ sourcemod_plugin(
 ```
 
 | Rule                  | Produces                           | Installs to                   |
-| ---------------------- | ----------------------------------- | ------------------------------ |
+| --------------------- | ---------------------------------- | ----------------------------- |
 | `sourcemod_extension` | `<name>.ext.so` / `<name>.ext.dll` | `addons/sourcemod/extensions` |
 | `sourcemod_plugin`    | `<name>.smx`                       | `addons/sourcemod/plugins`    |
 
@@ -114,12 +113,12 @@ game server directory.
 Four ready-made presets, each a complete SourceMod + Metamod build for one
 HL2SDK branch, packaged as a `pkg_filegroup`:
 
-| Preset               | Branch    | Game extension | Arch          |
-| -------------------- | --------- | --------------- | ------------- |
-| `sourcemod_cstrike`  | `css`     | yes (`extensions/cstrike`) | 64-bit |
-| `sourcemod_tf2`      | `tf2`     | yes (`extensions/tf2`)     | 64-bit |
-| `sourcemod_l4d2`     | `l4d2`    | no              | 32-bit only   |
-| `sourcemod_sdk2013`  | `sdk2013` | no              | 32-bit only   |
+| Preset              | Branch    | Game extension             | Arch        |
+| ------------------- | --------- | -------------------------- | ----------- |
+| `sourcemod_cstrike` | `css`     | yes (`extensions/cstrike`) | 64-bit      |
+| `sourcemod_tf2`     | `tf2`     | yes (`extensions/tf2`)     | 64-bit      |
+| `sourcemod_l4d2`    | `l4d2`    | no                         | 32-bit only |
+| `sourcemod_sdk2013` | `sdk2013` | no                         | 32-bit only |
 
 Bundled plugins and archive format are left to the caller:
 
@@ -209,7 +208,7 @@ l4d2 and sdk2013 are 32-bit only; see Design below.
 ## Reproducibility
 
 Every input is pinned and fetched by Bazel; nothing depends on a system
-SourceMod/Python/AMBuild install. Not yet hermetic in three ways:
+SourceMod/Python/AMBuild install. One gap remains:
 
 - The C++ toolchain is the host's — the autoconfigured MSVC install on
   Windows, the system compiler on Linux. On Linux that also makes artifacts
@@ -217,12 +216,18 @@ SourceMod/Python/AMBuild install. Not yet hermetic in three ways:
   correctness issue on an older target and not just a reproducibility one.
   Needs a pinned-sysroot toolchain (`toolchains_llvm`); until then, build on a
   host no newer than the target.
-- spcomp stamps a build timestamp into every plugin (`__DATE__`/`__TIME__` in
-  `plugins/include/core.inc`).
-- `__DATE__` in `sourcemm_api.cpp`/`metamod.h` gives day-granularity
-  nondeterminism (`SOURCE_DATE_EPOCH` isn't set).
 
-Packaging itself (rules_pkg) is deterministic.
+Build timestamps are pinned. Bazel's own C++ toolchain already compiles every
+gcc/clang translation unit with `__DATE__` redefined to `"redacted"`, extension
+code included; what that leaves is MSVC, where `__DATE__` cannot be redefined
+(C4117), and the fact that `sm version`/`meta version` print the value. So
+`//sourcemod:patches` and `//hl2sdk:patches` write `Jan  1 1980 00:00:00` into
+the four upstream sites those read, and two more patches teach spcomp and
+oldspcomp `SOURCE_DATE_EPOCH` — set by `sourcemod_plugin` in the action
+environment — since they read the clock when compiling a plugin rather than
+when they are built. `sourcemod/build_date.bzl` has the full account. An
+extension wanting a pinned date on Windows should spell `SMEXT_CONF_DATESTRING`
+as `SM_BUILD_TIMESTAMP`, as upstream's own do.
 
 ## Testing
 
@@ -232,7 +237,7 @@ $ bazel test //...
 
 `//tests:cross_platform_tests` and the four game-server build tests
 (`//tests:game_server_tests`) are tagged `manual` — the former needs a
-registered 32-bit *Linux* toolchain (Bazel's Unix autoconfiguration emits one
+registered 32-bit _Linux_ toolchain (Bazel's Unix autoconfiguration emits one
 for the host CPU only, so `g++-multilib` alone does not make
 `//platforms:linux_x86_32` resolvable), the latter a multi-hundred-MB fetch per
 branch. The Windows counterpart of that suffix test is not manual: it resolves
@@ -260,4 +265,6 @@ $ bazel test //tests:game_server_tests
    may have gained matching fixes: SourceMod compiles the SDK headers with
    its own flags, so a language-standard bump there can need a newer branch
    head in `hl2sdk/repositories.bzl` (C++20 did, for `tf2`).
-6. `bazel test //...`
+6. `bazel test //...`. A fetch failure naming `patches/` means a build-date
+   patch no longer applies — regenerate it rather than dropping it, or the
+   artifacts go back to carrying a real date.

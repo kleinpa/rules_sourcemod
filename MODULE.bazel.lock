@@ -199,7 +199,7 @@
   "moduleExtensions": {
     "//hl2sdk:repositories.bzl%hl2sdk": {
       "general": {
-        "bzlTransitiveDigest": "ngTQK4Sj2YfBtahANyoNn94x+4Ui8MCovLxW14e/p68=",
+        "bzlTransitiveDigest": "hdfIxsY6U3sVX4qnOCuboA/itvAyB7HLUm2q2u0wZc4=",
         "usagesDigest": "5UIPv2i7coIbsKHg4XKqdXzJroNEeJp6O9avC1MFU64=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -243,7 +243,7 @@
     },
     "//sourcemod:extensions.bzl%sourcemod": {
       "general": {
-        "bzlTransitiveDigest": "wQr7VrlNWzr1/QkjOxYcu5UfPASGYph8q5RxH57NaU8=",
+        "bzlTransitiveDigest": "RcP/njMYG5eaHxk3+EYm5/uoJUn5ukNo3uwbWStwoyE=",
         "usagesDigest": "X1UwMZ2CnmiiGbWU+LM/5Ty5USkgnhjOsaPnPfX4Z+U=",
         "recordedInputs": [],
         "generatedRepoSpecs": {

@@ -2,7 +2,13 @@ load(":server.bzl", "sourcemod_game_server")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["sdk.BUILD.bazel"])
+exports_files([
+    "sdk.BUILD.bazel",
+    "patches/build_date_sourcemm_api.patch",
+    "patches/build_date_version_header.patch",
+    "patches/spcomp_source_date_epoch.patch",
+    "patches/oldspcomp_source_date_epoch.patch",
+])
 
 # One preset per branch in HL2SDK_BRANCHES (//hl2sdk:repositories.bzl) -- a
 # closed set, so this enumeration is also the complete list of game servers

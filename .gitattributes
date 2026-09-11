@@ -1,0 +1,5 @@
+# Bazel's repository_ctx.patch drops CR when it reads a patch, so these are
+# stored LF-only even though the sources they apply to are CRLF. A Windows
+# checkout with core.autocrlf=true would otherwise rewrite them and they would
+# stop applying.
+*.patch -text

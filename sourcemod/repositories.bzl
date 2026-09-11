@@ -99,6 +99,16 @@ def _sourcemod_sdk_impl(repository_ctx):
         stripPrefix = "safetyhook-" + _SAFETYHOOK_COMMIT,
     )
 
+    # Pins the build timestamp; see //sourcemod:build_date.bzl. Applied after
+    # every extraction above, since the compiler patches land in the
+    # sourcepawn/ tree. One patch per file: repository_ctx.patch carries the line offset
+    # accumulated in an earlier file of the same patch into the next one, so a
+    # multi-file patch fails on its second file as soon as a hunk changes the
+    # line count. Bazel's patcher also drops CR on read, so these are stored
+    # LF-only even though the sources they apply to are CRLF.
+    for patch in repository_ctx.attr._patches:
+        repository_ctx.patch(patch, strip = 1)
+
     # Read the product version out of the fetched tree rather than hardcoding
     # it, so it always matches the pinned SourcePawn sources.
     product_version = repository_ctx.read("sourcepawn/product.version").strip()
@@ -117,6 +127,15 @@ sourcemod_sdk_repository = repository_rule(
         "_build_file": attr.label(
             default = Label("//sourcemod:sdk.BUILD.bazel"),
             allow_single_file = True,
+        ),
+        "_patches": attr.label_list(
+            default = [
+                Label("//sourcemod:patches/build_date_version_header.patch"),
+                Label("//sourcemod:patches/build_date_sourcemm_api.patch"),
+                Label("//sourcemod:patches/spcomp_source_date_epoch.patch"),
+                Label("//sourcemod:patches/oldspcomp_source_date_epoch.patch"),
+            ],
+            allow_files = True,
         ),
     },
 )

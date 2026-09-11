@@ -1,0 +1,22 @@
+--- a/sourcepawn/legacy-compiler/main.cpp
++++ b/sourcepawn/legacy-compiler/main.cpp
+@@ -295,8 +295,17 @@
+     time_t td;
+     struct tm* curtime;
+ 
+-    time(&td);
+-    curtime = localtime(&td);
++    // SOURCE_DATE_EPOCH (reproducible-builds.org/specs/source-date-epoch)
++    // pins the timestamp that lands in every .smx, since core.inc copies
++    // these two defines into the plugin's `__version` struct. Read as UTC
++    // so the result does not depend on the build machine's zone either.
++    if (const char* source_date_epoch = getenv("SOURCE_DATE_EPOCH")) {
++        td = (time_t)strtoll(source_date_epoch, nullptr, 10);
++        curtime = gmtime(&td);
++    } else {
++        time(&td);
++        curtime = localtime(&td);
++    }
+ 
+ #if defined __EMSCRIPTEN__
+     snprintf(date, sizeof(date), "\"%02d/%02d/%04d\"", curtime->tm_mon + 1, curtime->tm_mday,

@@ -3,4 +3,6 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "hl2sdk.BUILD.bazel",
     "metamod.BUILD.bazel",
+    "patches/build_date_metamod_h.patch",
+    "patches/build_date_version_header.patch",
 ])
