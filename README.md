@@ -221,12 +221,13 @@ $ bazel build --platforms=@rules_sourcemod//platforms:windows_x86_32 \
     //:my_addon
 ```
 
-Verified end to end — including through this repo's own SDK headers, not
-just a synthetic example — by building `//tests:test_ext` this way and
-confirming the output is a real 32-bit PE DLL. Not yet verified: an
-HL2SDK-backed extension (`tier0.lib`/`vstdlib.lib` linking) or a full game
-server preset built this way; those pull in far more of the vendored SDKs'
-own build assumptions and haven't been exercised against this toolchain.
+Verified end to end by building the full `sourcemod_ep1` preset this way
+(see Testing below) and running the result under a real srcds: every
+binary in it — Metamod's loader and core, SourceMod's own, and the
+HL2SDK-backed extensions linking `tier0.lib`/`vstdlib.lib` — is a 32-bit PE
+DLL produced by this toolchain. Two SourcePawn-side accommodations it
+needed are documented where they live in `sourcemod/sdk.BUILD.bazel`
+(mimalloc's MSVC-C atomics under Clang, and `_WIN32_WINNT`).
 
 ## Design
 
@@ -274,7 +275,7 @@ as `SM_BUILD_TIMESTAMP`, as upstream's own do.
 $ bazel test //...
 ```
 
-`//tests:cross_platform_tests` and the four game-server build tests
+`//tests:cross_platform_tests` and the five game-server build tests
 (`//tests:game_server_tests`) are tagged `manual` — the former needs a
 registered 32-bit _Linux_ toolchain (Bazel's Unix autoconfiguration emits one
 for the host CPU only, so `g++-multilib` alone does not make
@@ -285,6 +286,18 @@ against the 32-bit MSVC toolchain this module registers, and is skipped by
 
 ```console
 $ bazel test //tests:game_server_tests
+```
+
+`sourcemod_ep1_builds_test` is the Windows-only one among those, so on a
+Linux host it can't run as a test at all (`--platforms=windows_x86_32`
+leaves it no execution platform to run on); build the preset directly
+instead, with the cross-compiling flags from "Cross-compiling from Linux"
+above:
+
+```console
+$ bazel build --platforms=//platforms:windows_x86_32 \
+    --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows \
+    //sourcemod:sourcemod_ep1
 ```
 
 ## Upgrading SourceMod

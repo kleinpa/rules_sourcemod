@@ -140,6 +140,20 @@ cc_library(
 # Warnings are silenced outright (-w, /w) as upstream does: it is third-party
 # C built with SourcePawn's -Werror, and this module's own suppression set
 # (//sourcemod:warnings.bzl) is tuned to SourceMod's C++, not to it.
+#
+# -Wno-incompatible-pointer-types on top of /w, for the same reason
+# UPSTREAM_WARNING_COPTS carries -Wno-register: it's not a warning-quietness
+# setting under Clang. mimalloc's MSVC-C atomics wrapper (include/mimalloc/
+# atomic.h) defines `_Atomic(tp)` away to plain `tp`, so every atomic
+# pointer field is handed to its `uintptr_t*`-typed helpers as e.g.
+# `mi_heap_t**` -- a mismatch real cl.exe tolerates in C with a warning
+# (C4133, silenced by /w) but Clang, both native clang-cl and this module's
+# cross-compiling one (see windows/xwin_sysroot.bzl), rejects as an error
+# that -w alone doesn't downgrade. Only reachable in a build that doesn't
+# define NDEBUG (Bazel's fastbuild; upstream's own optimized build sets it
+# and the offending `mi_assert_internal` lines vanish), but it has to
+# compile there too. A no-op on real MSVC, which downgrades an unrecognized
+# switch to a D9002 warning rather than failing.
 cc_library(
     name = "mimalloc",
     srcs = SPCOMP_MIMALLOC_SRCS,
@@ -156,7 +170,10 @@ cc_library(
         allow_empty = False,
     ),
     copts = select({
-        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/w",
+            "-Wno-incompatible-pointer-types",
+        ],
         "//conditions:default": ["-w"],
     }),
     defines = ["MI_STATIC_LIB"],
@@ -209,8 +226,25 @@ cc_library(
     ],
 )
 
+# _WIN32_WINNT: Bazel's MSVC toolchain configuration (rules_cc's
+# windows_cc_toolchain_config, and this module's cross-compiling clang-cl
+# copy of it -- see windows/xwin_sysroot.bzl) passes /D_WIN32_WINNT=0x0601
+# (Windows 7) to every compile, which hides anything the Windows SDK headers
+# gate on a newer version -- vm/platform-windows.cpp's
+# GetCurrentThreadStackLimits() (Windows 8, processthreadsapi.h's
+# `_WIN32_WINNT >= 0x0602` block) fails to compile with it. Upstream's
+# AMBuild never sets the macro, so its builds get the SDK's own default
+# (sdkddkver.h: the latest, Windows 10). /U first, then /D: both cl.exe and
+# clang-cl apply the two in command-line order, and copts come after the
+# toolchain's own flags, so this replaces rather than redefines (C4005 /
+# -Wmacro-redefined). Not raised all the way to the SDK default, just to
+# what the sources need.
 _SPCOMP_COPTS = select({
-    "@platforms//os:windows": ["/std:c++20"],
+    "@platforms//os:windows": [
+        "/std:c++20",
+        "/U_WIN32_WINNT",
+        "/D_WIN32_WINNT=0x0602",
+    ],
     "//conditions:default": ["-std=c++20"],
 }) + UPSTREAM_WARNING_COPTS
 
