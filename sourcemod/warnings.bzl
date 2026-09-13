@@ -96,7 +96,7 @@ _GCC = [
 # harmless even if cl.exe treated it as unrecognized, since MSVC downgrades
 # an unknown switch to a D9002 warning rather than failing the build.
 UPSTREAM_WARNING_COPTS = select({
-    "@rules_cc//cc/compiler:msvc-cl": ["-Wno-register"],
+    Label("@rules_cc//cc/compiler:msvc-cl"): ["-Wno-register"],
     "//conditions:default": _GCC,
 })
 
@@ -112,7 +112,7 @@ UPSTREAM_WARNING_COPTS = select({
 # before, since nothing had built a Windows binary that actually called
 # into one of the less-common libraries in the list.
 UPSTREAM_WINDOWS_LINKOPTS = select({
-    "@platforms//os:windows": [
+    Label("@platforms//os:windows"): [
         "kernel32.lib",
         "user32.lib",
         "gdi32.lib",

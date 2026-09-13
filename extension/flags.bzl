@@ -38,8 +38,15 @@ _MSVC_COPTS = [
     "/Oy-",
 ]
 
+# Label() keys, not bare strings, throughout this file and warnings.bzl (as
+# sourcemod/defines.bzl already does): a select() key is resolved in the
+# repo mapping of whichever BUILD file the macro is instantiated from, and a
+# consumer's repository need not have @rules_cc or @platforms visible under
+# those names at all -- a bare "@rules_cc//..." there is an analysis error
+# ("No repository visible as '@rules_cc'"). Label() binds the key here, in
+# this module's own mapping, where both are dependencies.
 EXTENSION_COPTS = select({
-    "@rules_cc//cc/compiler:msvc-cl": _MSVC_COPTS,
+    Label("@rules_cc//cc/compiler:msvc-cl"): _MSVC_COPTS,
     "//conditions:default": _GCC_LIKE_COPTS,
 }) + UPSTREAM_WARNING_COPTS
 
@@ -52,8 +59,8 @@ EXTENSION_LINKOPTS = select({
     # UPSTREAM_WINDOWS_LINKOPTS (added below) covers this platform; the
     # flags in every other branch here are GCC/ld-only and not valid for
     # MSVC/lld-link.
-    "@platforms//os:windows": [],
-    "@platforms//os:macos": ["-liconv"],
+    Label("@platforms//os:windows"): [],
+    Label("@platforms//os:macos"): ["-liconv"],
     "//conditions:default": [
         # Extensions load into srcds alongside other extensions; never export
         # symbols from statically linked dependencies.
