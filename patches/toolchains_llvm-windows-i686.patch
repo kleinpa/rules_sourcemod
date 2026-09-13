@@ -54,7 +54,7 @@ index ce95ebb..99249da 100644
  load("@rules_cc//cc/toolchains:args.bzl", "cc_args")
  load("@rules_cc//cc/toolchains:feature.bzl", "cc_feature")
  load("@rules_cc//cc/toolchains:feature_constraint.bzl", "cc_feature_constraint")
-@@ -54,6 +60,148 @@ def _idirafter(includes):
+@@ -54,6 +60,164 @@ def _idirafter(includes):
          for flag in ("-idirafter", include)
      ]
  
@@ -177,7 +177,23 @@ index ce95ebb..99249da 100644
 +        ] + lib_flags,
 +        default_compile_flags = [
 +            "--target=" + target_system_name,
-+            "/Wall",
++            # Real MSVC's /W3, not clang-cl's /Wall: rules_sourcemod's own
++            # warning suppressions (sourcemod/warnings.bzl's
++            # UPSTREAM_WARNING_COPTS, appended after each target's /W3) are
++            # sized against upstream's actual AMBuildScript, which builds
++            # with /W3 and is "already quiet" about everything that list
++            # handles -- see that file's docstring. clang-cl's warning
++            # flags are cumulative, not a strict level override: /Wall here
++            # turns on clang-only diagnostics real MSVC's /W3 never has
++            # (-Wc++98-compat, -Wunsafe-buffer-usage, -Wunused-parameter
++            # among them), and a target's later /W3 doesn't turn them back
++            # off, it just adds its own smaller set on top -- so every
++            # vendored SourceMod/HL2SDK file neither this repo nor upstream
++            # owns warned on all of them, several hundred thousand lines of
++            # it on a clean build. /W3 here matches what upstream's own
++            # warning suppressions actually assume, for both this repo's
++            # targets and rules_sourcemod's.
++            "/W3",
 +            "/MT",
 +            "/DWIN32",
 +            "/D_WIN32",
@@ -203,7 +219,7 @@ index ce95ebb..99249da 100644
  # Macro for calling cc_toolchain_config from @bazel_tools with setting the
  # right paths and flags for the tools.
  def cc_toolchain_config(
-@@ -87,6 +235,24 @@ def cc_toolchain_config(
+@@ -87,6 +251,24 @@ def cc_toolchain_config(
      tools_path_prefix = paths.ensure_trailing_slash(tools_path_prefix)
      wrapper_bin_prefix = paths.ensure_trailing_slash(wrapper_bin_prefix)
  
