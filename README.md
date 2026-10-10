@@ -250,9 +250,13 @@ $ bazel test //tests:game_server_tests
 
 ## Upgrading SourceMod
 
-1. Pick a tag from [alliedmodders/sourcemod](https://github.com/alliedmodders/sourcemod/tags).
-2. Read the submodule SHAs it records:
-   `git ls-tree <tag> public/amtl public/safetyhook sourcepawn`, then
+1. Pick a build. SourceMod cuts one per commit rather than tagging releases on
+   the branch this tracks, so pick the commit behind a build listed on
+   [the 1.13 download page](https://www.sourcemod.net/downloads.php?branch=dev)
+   -- 1.13 is upstream's development branch (`master`); the stable branch is
+   1.12, which predates SourcePawn 2.
+2. Read the submodule SHAs that commit records:
+   `git ls-tree <commit> public/amtl public/safetyhook sourcepawn`, then
    SourcePawn's own: `git ls-tree <sourcepawn sha> third_party/mimalloc` in
    alliedmodders/sourcepawn.
 3. Update the pins at the top of `sourcemod/repositories.bzl`.

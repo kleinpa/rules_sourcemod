@@ -10,14 +10,18 @@ which cloned SourceMod at HEAD and produced unreproducible builds.
 See "Upgrading SourceMod" in README.md for the bump procedure.
 """
 
-# SourceMod release tag `1.13.0.7461` in alliedmodders/sourcemod.
-_SOURCEMOD_COMMIT = "809392d1dc0436b064f1d2d03cc498551f2a97b9"
+# SourceMod build `1.13.0.7477` in alliedmodders/sourcemod. 1.13 is upstream's
+# development branch (it is `master`, with no release tag of its own); the
+# stable branch is 1.12, which predates SourcePawn 2. Builds are cut per commit,
+# so a bump means picking a commit, not a tag -- see "Upgrading SourceMod" in
+# README.md.
+_SOURCEMOD_COMMIT = "ce7dccfffbabe02f872f5ac3f4eb3f310e68f9f3"
 
 # Submodule SHAs recorded by the SourceMod tree at _SOURCEMOD_COMMIT. These are
 # read straight from the gitlink entries, so the header set matches exactly what
 # upstream's own `checkout-deps.sh` would have produced.
 _AMTL_COMMIT = "03506b678bc5838d958b8d51d2f9bee19b1edd6d"
-_SOURCEPAWN_COMMIT = "672b2cda216d7543e12fe3ce03201cd537162a8f"
+_SOURCEPAWN_COMMIT = "861f72931ad0d2a9b722d2e9143e703e6ff53953"
 
 # mimalloc, a submodule of SourcePawn at third_party/mimalloc -- AlliedModders'
 # own fork, not upstream microsoft/mimalloc, since the VM calls into fork-only

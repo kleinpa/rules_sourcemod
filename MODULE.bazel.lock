@@ -243,7 +243,7 @@
     },
     "//sourcemod:extensions.bzl%sourcemod": {
       "general": {
-        "bzlTransitiveDigest": "RcP/njMYG5eaHxk3+EYm5/uoJUn5ukNo3uwbWStwoyE=",
+        "bzlTransitiveDigest": "GdlAhEtv8HJRRZuuTfj7d+84+O1gIAwc6vn3q/T3tBU=",
         "usagesDigest": "X1UwMZ2CnmiiGbWU+LM/5Ty5USkgnhjOsaPnPfX4Z+U=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
