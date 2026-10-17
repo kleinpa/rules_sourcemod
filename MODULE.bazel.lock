@@ -199,7 +199,7 @@
   "moduleExtensions": {
     "//hl2sdk:repositories.bzl%hl2sdk": {
       "general": {
-        "bzlTransitiveDigest": "hdfIxsY6U3sVX4qnOCuboA/itvAyB7HLUm2q2u0wZc4=",
+        "bzlTransitiveDigest": "EA9Gy53jdnCphG4MS//Y25rDZZB9qMbiNVTi+gW/Nlw=",
         "usagesDigest": "5UIPv2i7coIbsKHg4XKqdXzJroNEeJp6O9avC1MFU64=",
         "recordedInputs": [],
         "generatedRepoSpecs": {

@@ -1,0 +1,37 @@
+SourceHook's CVector names its own constructors and destructor with the
+template-id -- `CVector<T>()` rather than `CVector()`. C++20 forbids that
+(CWG 2237), and SourceMod's TopMenu.h includes this header, so every
+translation unit that reaches it fails. GCC 16 downgrades it to a warning
+(-Wtemplate-id-cdtor), which is why this builds on a current Fedora host and
+not on CI's ubuntu-24.04 image, whose GCC 13 predates that flag and treats it
+as a parse error. Upstream's 1.12-dev still carries the construct, so there is
+no newer pin to take instead.
+
+--- a/core/sourcehook/sh_vector.h
++++ b/core/sourcehook/sh_vector.h
+@@ -282,14 +282,14 @@
+ 	};
+ 
+ 	// constructors / destructors
+-	CVector<T>()
++	CVector()
+ 	{
+ 		m_Size = 0;
+ 		m_CurrentUsedSize = 0;
+ 		m_Data = NULL;
+ 	}
+ 
+-	CVector<T>(const CVector<T> & other)
++	CVector(const CVector<T> & other)
+ 	{
+ 		// copy data
+ 		m_Data = new T [other.m_CurrentUsedSize];
+@@ -299,7 +299,7 @@
+ 			m_Data[i] = other.m_Data[i];
+ 	}
+ 
+-	~CVector<T>()
++	~CVector()
+ 	{
+ 		clear();
+ 	}
