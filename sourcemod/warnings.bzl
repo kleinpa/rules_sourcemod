@@ -17,8 +17,8 @@ These are GCC spellings, and only GCC's. Upstream supports both families and
 switches flags between them, but doing that here means maintaining two lists
 whose contents cannot be checked against each other by anything but a build on
 each compiler. A clang build still works; it lands in the same branch, does not
-recognize a handful of the options -- `-Wno-template-id-cdtor` and
-`-Wno-maybe-uninitialized` among them -- and says so whenever it emits any other
+recognize a handful of the options -- `-Wno-maybe-uninitialized` and
+`-Wno-class-memaccess` among them -- and says so whenever it emits any other
 diagnostic. That is the cost of the simplification, and it is paid in log lines
 rather than in behavior.
 
@@ -66,9 +66,6 @@ _GCC = [
     #
     # Not in upstream's list, which predates the compilers that emit these.
     #
-    # SourceHook spells constructors and destructors `CVector<T>()`, which C++20
-    # removed and GCC 14 began warning about ahead of time.
-    "-Wno-template-id-cdtor",
     # The HL2SDK's container and string code.
     "-Wno-sign-compare",
     "-Wno-nonnull-compare",

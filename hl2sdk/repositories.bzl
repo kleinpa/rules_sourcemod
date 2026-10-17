@@ -280,8 +280,9 @@ def _metamod_impl(repository_ctx):
         stripPrefix = "amtl-" + _METAMOD_AMTL_COMMIT,
     )
 
-    # Pins the `__DATE__` in metamod_version.h/metamod.h; see
-    # //sourcemod:build_date.bzl, and //sourcemod:repositories.bzl's own patch
+    # Pins the `__DATE__` in metamod_version.h/metamod.h, and makes
+    # SourceHook's CVector legal C++20; see //sourcemod:build_date.bzl, the
+    # patch headers themselves, and //sourcemod:repositories.bzl's own patch
     # loop for why these are one file each.
     for patch in repository_ctx.attr._patches:
         repository_ctx.patch(patch, strip = 1)
@@ -324,6 +325,7 @@ metamod_repository = repository_rule(
             default = [
                 Label("//hl2sdk:patches/build_date_version_header.patch"),
                 Label("//hl2sdk:patches/build_date_metamod_h.patch"),
+                Label("//hl2sdk:patches/sourcehook_cxx20_ctor_template_id.patch"),
             ],
             allow_files = True,
         ),
