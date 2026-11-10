@@ -85,11 +85,11 @@ cc_library(
 )
 
 # ---------------------------------------------------------------------------
-# SourcePawn compiler (spcomp), built from source.
+# The SourcePawn compiler (spcomp), built from source.
 #
-# Everything below produces the .sp -> .smx compiler. It is a build tool, so it
-# is always built for the execution platform; see spcomp/sources.bzl for why
-# that also determines which VM backend is compiled.
+# Everything below produces the .sp -> .smx compiler. It is a build tool, so
+# it is always built for the execution platform; see spcomp/sources.bzl for
+# why that also determines which VM backend is compiled.
 # ---------------------------------------------------------------------------
 
 # zlib, vendored in the SourcePawn tree. spcomp uses it to compress the code
@@ -131,15 +131,18 @@ cc_library(
     includes = ["generated"],
 )
 
-# Headers shared between the compiler and the VM.
+# Headers shared between the compilers and the VM. Both compiler directories
+# are in here even though no binary links both: they carry files of the same
+# names and each includes its own by bare `"lexer.h"`-style quotes, which the
+# preprocessor resolves against the including file's directory first, so
+# nothing crosses over.
 cc_library(
     name = "sourcepawn_internal_headers",
     hdrs = glob(
         [
             "sourcepawn/compiler/**/*.h",
-            "sourcepawn/compiler/**/*-inl.h",
             "sourcepawn/libsmx/*.h",
-            "sourcepawn/utils/*.h",
+            "sourcepawn/shared/*.h",
             "sourcepawn/vm/**/*.h",
         ],
         allow_empty = False,
@@ -188,12 +191,14 @@ cc_library(
         "//conditions:default": SPCOMP_VM_SRCS_X86_64,
     }),
     copts = _SPCOMP_COPTS,
-    # SourcePawn's own AMBuildScript enables the JIT (has_jit) for both x86
-    # and x86_64 -- see spcomp/sources.bzl's SPCOMP_VM_SRCS_X86_64/
-    # SPCOMP_VM_SRCS_X86 comment. Unconditional here rather than a select()
-    # since every real (non-emscripten) target this module builds for
-    # wants it.
-    defines = _SPCOMP_DEFINES + ["SP_HAS_JIT"],
+    # The JIT is x86-only upstream (vm/AMBuilder gates both the sources and
+    # this define on `arch in ['x86']`); a 64-bit VM interprets. api.cpp and
+    # code-stubs.h branch on it, so it has to match the source list in
+    # spcomp/sources.bzl exactly.
+    defines = _SPCOMP_DEFINES + select({
+        "@platforms//cpu:x86_32": ["SP_HAS_JIT"],
+        "//conditions:default": [],
+    }),
     alwayslink = True,
     # The VM's thread support needs pthread. Explicit because glibc only
     # folded libpthread into libc in 2.34: linking against an older sysroot
@@ -212,10 +217,12 @@ cc_library(
     ],
 )
 
-# The compiler front end, .smx writer, and amtl's argument parser.
+# The .smx writer and amtl's argument parser -- the driver-support half of
+# the compiler, kept separate because upstream builds it as its own module
+# (libsmx) rather than part of the front end.
 cc_library(
-    name = "sourcepawn_compiler",
-    srcs = SPCOMP_COMPILER_SRCS + SPCOMP_LIBSMX_SRCS + SPCOMP_AMTL_SRCS,
+    name = "sourcepawn_compiler_common",
+    srcs = SPCOMP_LIBSMX_SRCS + SPCOMP_AMTL_SRCS,
     copts = _SPCOMP_COPTS,
     defines = _SPCOMP_DEFINES,
     deps = [
@@ -225,16 +232,27 @@ cc_library(
     ],
 )
 
+# The SourcePawn compiler front end.
+cc_library(
+    name = "sourcepawn_compiler",
+    srcs = SPCOMP_COMPILER_SRCS,
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    deps = [":sourcepawn_compiler_common"],
+)
+
+# The driver posts window messages to notify an editor of build results.
+_SPCOMP_LINKOPTS = select({
+    "@platforms//os:windows": ["user32.lib"],
+    "//conditions:default": [],
+})
+
 cc_binary(
     name = "spcomp",
     srcs = ["sourcepawn/compiler/driver.cpp"],
     copts = _SPCOMP_COPTS,
     defines = _SPCOMP_DEFINES,
-    linkopts = select({
-        # driver.cpp posts window messages to notify an editor of build results.
-        "@platforms//os:windows": ["user32.lib"],
-        "//conditions:default": [],
-    }),
+    linkopts = _SPCOMP_LINKOPTS,
     deps = [
         ":sourcepawn_compiler",
         ":sourcepawn_internal_headers",

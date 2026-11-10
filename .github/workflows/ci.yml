@@ -78,16 +78,15 @@ jobs:
       # Tagged manual (multi-hundred-MB HL2SDK fetch per branch), so named
       # explicitly rather than picked up by the wildcard above.
       #
-      # cstrike/tf2 only: l4d2 and sdk2013 are 32-bit only (their vendored
-      # tier1 carries 32-bit inline asm) and nothing currently stops them being
-      # attempted on a 64-bit platform -- the presets carry `tags = ["manual"]`
-      # but no `target_compatible_with`, so naming //tests:game_server_tests on
-      # a 64-bit platform fails inside the SDK rather than skipping.
+      # All four presets, on every platform: the two that are 32-bit only
+      # (l4d2, sdk2013) declare themselves incompatible with a 64-bit target
+      # (see sourcemod/server.bzl), so they are skipped rather than attempted
+      # here and genuinely built on the 32-bit job below.
       - name: Game server presets
         if: matrix.mode == 'test'
         run: >-
           bazel test --platforms=${{ matrix.platform }}
-          //tests:sourcemod_cstrike_builds_test //tests:sourcemod_tf2_builds_test
+          //tests:game_server_tests
 
       # All four presets are valid here, including the two 32-bit-only ones.
       - name: Game server presets (all four)

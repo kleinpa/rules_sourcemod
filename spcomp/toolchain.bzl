@@ -6,7 +6,7 @@ built from source) without forking these rules.
 """
 
 SpcompInfo = provider(
-    doc = "Information about a SourcePawn compiler.",
+    doc = "Information about a SourcePawn compiler installation.",
     fields = {
         "compiler": "File: the spcomp executable.",
         "stdlib_includes": "depset[File]: bundled .inc standard library files.",

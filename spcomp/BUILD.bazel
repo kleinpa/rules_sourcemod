@@ -4,8 +4,9 @@ package(default_visibility = ["//visibility:public"])
 
 toolchain_type(name = "toolchain_type")
 
-# The compiler is built from source by @sourcemod_sdk; this only wires it up as
-# the default implementation of the toolchain type above.
+# spcomp is built from source by @sourcemod_sdk; this only wires it up as the
+# default implementation of the toolchain type above. A consumer that wants a
+# different compiler registers its own toolchain rather than forking this.
 spcomp_toolchain(
     name = "spcomp_impl",
     compiler = "@sourcemod_sdk//:spcomp",

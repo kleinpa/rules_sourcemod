@@ -78,6 +78,8 @@ Example:
         src = "my_plugin.sp",
         includes = [":my_natives_inc"],
     )
+
+Compiled with the spcomp the registered toolchain provides.
 """,
     attrs = {
         "src": attr.label(

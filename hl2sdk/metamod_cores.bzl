@@ -44,8 +44,8 @@ CORE_COPTS = select({
     # c++14, not this repo's usual c++17 (see sourcemod/server.bzl's
     # _COPTS_COMMON): upstream's own AMBuildScript (configure_gcc()) targets
     # c++14 for Metamod specifically -- unlike SourceMod's separately
-    # versioned build, which genuinely does target c++17. Metamod's loader
-    # still has a `for (register size_t i = ...)` (loader/utility.cpp,
+    # versioned build, which targets c++17. Metamod's loader still has a
+    # `for (register size_t i = ...)` (loader/utility.cpp,
     # upstream, not ours to fix): under c++14 that's merely deprecated, and
     # UPSTREAM_WARNING_COPTS' `-Wno-register` (also upstream's own flag)
     # silences the deprecation warning -- but under ISO c++17 `register`

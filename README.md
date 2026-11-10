@@ -41,7 +41,7 @@ sourcemod_plugin(
 ```
 
 | Rule                  | Produces                           | Installs to                   |
-| ---------------------- | ----------------------------------- | ------------------------------ |
+| --------------------- | ---------------------------------- | ----------------------------- |
 | `sourcemod_extension` | `<name>.ext.so` / `<name>.ext.dll` | `addons/sourcemod/extensions` |
 | `sourcemod_plugin`    | `<name>.smx`                       | `addons/sourcemod/plugins`    |
 
@@ -68,6 +68,18 @@ sourcemod_extension(
 )
 ```
 
+`sourcemod_plugin` compiles with the `spcomp` built from the pinned SourceMod
+tree -- the same compiler SourceMod builds its own bundled plugins with, so a
+plugin that compiles for upstream compiles here. A consumer that needs a
+different one registers its own `spcomp_toolchain` rather than forking these
+rules.
+
+This module tracks SourceMod's **stable** branch, 1.12, which is what the
+plugin ecosystem compiles against; it emits SourcePawn 1 bytecode. The 1.13
+development branch carries SourcePawn 2 (a second compiler, a new VM, and a
+C++20 build); the `v2` tag holds a working build of it, to pick up again once
+1.13 is promoted to stable.
+
 Both rules report their install path via rules_pkg's `PackageFilesInfo`, so
 they drop straight into a `pkg_tar`/`pkg_zip`:
 
@@ -92,12 +104,12 @@ game server directory.
 Four ready-made presets, each a complete SourceMod + Metamod build for one
 HL2SDK branch, packaged as a `pkg_filegroup`:
 
-| Preset               | Branch    | Game extension | Arch          |
-| -------------------- | --------- | --------------- | ------------- |
-| `sourcemod_cstrike`  | `css`     | yes (`extensions/cstrike`) | 64-bit |
-| `sourcemod_tf2`      | `tf2`     | yes (`extensions/tf2`)     | 64-bit |
-| `sourcemod_l4d2`     | `l4d2`    | no              | 32-bit only   |
-| `sourcemod_sdk2013`  | `sdk2013` | no              | 32-bit only   |
+| Preset              | Branch    | Game extension             | Arch        |
+| ------------------- | --------- | -------------------------- | ----------- |
+| `sourcemod_cstrike` | `css`     | yes (`extensions/cstrike`) | 64-bit      |
+| `sourcemod_tf2`     | `tf2`     | yes (`extensions/tf2`)     | 64-bit      |
+| `sourcemod_l4d2`    | `l4d2`    | no                         | 32-bit only |
+| `sourcemod_sdk2013` | `sdk2013` | no                         | 32-bit only |
 
 Bundled plugins and archive format are left to the caller:
 
@@ -209,7 +221,7 @@ $ bazel test //...
 
 `//tests:cross_platform_tests` and the four game-server build tests
 (`//tests:game_server_tests`) are tagged `manual` — the former needs a
-registered 32-bit *Linux* toolchain (Bazel's Unix autoconfiguration emits one
+registered 32-bit _Linux_ toolchain (Bazel's Unix autoconfiguration emits one
 for the host CPU only, so `g++-multilib` alone does not make
 `//platforms:linux_x86_32` resolvable), the latter a multi-hundred-MB fetch per
 branch. The Windows counterpart of that suffix test is not manual: it resolves
@@ -222,10 +234,23 @@ $ bazel test //tests:game_server_tests
 
 ## Upgrading SourceMod
 
-1. Pick a tag from [alliedmodders/sourcemod](https://github.com/alliedmodders/sourcemod/tags).
-2. Read the submodule SHAs it records: `git ls-tree <tag> public/amtl sourcepawn`
+1. Pick a build. SourceMod cuts one per commit rather than tagging releases,
+   so pick the commit behind a build listed on
+   [the stable download page](https://www.sourcemod.net/downloads.php?branch=stable)
+   -- the 1.12 branch (`1.12-dev` in git, confusing name notwithstanding: it
+   is what upstream ships as Stable). 1.13 is the development branch; see the
+   `v2` tag before moving to it.
+2. Read the submodule SHAs that commit records:
+   `git ls-tree <commit> public/amtl public/safetyhook sourcepawn`.
 3. Update the pins at the top of `sourcemod/repositories.bzl`.
-4. Diff the compiler's source lists against upstream's AMBuilder files
-   (`compiler/`, `libsmx/`, `vm/`) and update `spcomp/sources.bzl` if files
-   were added or removed.
-5. `bazel test //...`
+4. Diff the source lists against upstream's AMBuild files (`compiler/`,
+   `libsmx/` and `vm/`, plus `AMBuildScript`'s `BuildStaticCoreLib` for which
+   of them compose the core library) and update `spcomp/sources.bzl` if files
+   were added or removed. Check `AMBuildScript` for a changed `-std=` or new
+   defines -- `sourcemod/sdk.BUILD.bazel` and `sourcemod/server.bzl` both pin
+   the standard explicitly.
+5. If upstream's `AMBuildScript` gained a compiler flag, the HL2SDK branches
+   may have gained matching fixes: SourceMod compiles the SDK headers with
+   its own flags, so a language-standard bump there can need a newer branch
+   head in `hl2sdk/repositories.bzl`.
+6. `bazel test //...`

@@ -9,6 +9,7 @@ load(
     "package_info_test",
     "plugin_layout_test",
 )
+load(":smx_version_test.bzl", "smx_version_test")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -80,6 +81,16 @@ package_info_test(
     name = "plugin_reports_package_info_test",
     expected_dests = ["addons/sourcemod/plugins"],
     target_under_test = ":test_plugin",
+)
+
+# --- Emitted bytecode ------------------------------------------------------
+#
+# See smx_version_test.bzl: the build proves spcomp ran, this proves
+# which bytecode generation it wrote.
+
+smx_version_test(
+    name = "plugin_emits_sp1_bytecode_test",
+    plugin = ":test_plugin",
 )
 
 # Compiles every built-in SourceMod plugin (sourcemod/plugins.bzl) through

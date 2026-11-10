@@ -10,14 +10,17 @@ which cloned SourceMod at HEAD and produced unreproducible builds.
 See "Upgrading SourceMod" in README.md for the bump procedure.
 """
 
-# SourceMod release tag `1.13.0.7439` in alliedmodders/sourcemod.
-_SOURCEMOD_COMMIT = "a36a44998370a738b0d34d927fbdd630a0ae11ad"
+# SourceMod build `1.12.0.7260`, on the 1.12 branch (`1.12-dev` in git), which
+# is what upstream ships as Stable. Builds are cut per commit rather than
+# tagged, so a bump means picking a commit, not a tag -- see "Upgrading
+# SourceMod" in README.md.
+_SOURCEMOD_COMMIT = "3f7460671f7adc4a3c6791a47d21ba3e7b5fba91"
 
 # Submodule SHAs recorded by the SourceMod tree at _SOURCEMOD_COMMIT. These are
 # read straight from the gitlink entries, so the header set matches exactly what
 # upstream's own `checkout-deps.sh` would have produced.
-_AMTL_COMMIT = "44e73d48620c6f880d4243fdeb51e8160b379a9b"
-_SOURCEPAWN_COMMIT = "f2d11ff1a80ac891b7fb7ba81ad78646d9232c3e"
+_AMTL_COMMIT = "2d3b1a3378a3728637f26660c9ffc2df3189cf62"
+_SOURCEPAWN_COMMIT = "11b22edb634b9764d19fd28699e03289cfd18520"
 
 # safetyhook, a submodule at public/safetyhook. CDetour's detours.h includes
 # <safetyhook.hpp>, so any extension using CDetour (sdktools, cstrike) needs it.

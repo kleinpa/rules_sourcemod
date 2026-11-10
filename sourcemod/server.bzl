@@ -96,7 +96,7 @@ _PRIVATE = ["//visibility:private"]
 # Compiler flags that mirror SM's own AMBuilder configuration for server
 # components (MMS.Library / SM.Library / SM.HL2Library / SM.HL2ExtConfig).
 _COPTS_COMMON = select({
-    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/W3", "/EHsc", "/GR-", "/std:c++17"],
     "//conditions:default": [
         "-std=c++17",
         "-fPIC",
@@ -205,6 +205,19 @@ def sourcemod_game_server(
     # every other target below still gets built, just not p + "game".
     game = _GAME_EXTENSIONS.get(branch)
     ext = HL2SDK_BRANCHES[branch]["extension"]  # e.g. "2.css"
+
+    # Some engine branches ship no 64-bit libraries at all (l4d2, sdk2013,
+    # ep1) and their vendored tier1 carries 32-bit-only inline asm, so a
+    # 64-bit build of them fails deep inside the SDK rather than anywhere
+    # this module controls. Derived from the branch table rather than listed
+    # by name: a branch is 64-bit-capable exactly when it declares the
+    # libraries for it. Marking the preset incompatible is what makes a
+    # wildcard build or test on a 64-bit platform skip it, and incompatibility
+    # propagates, so a build_test naming the preset is skipped too.
+    sixty_four_bit_capable = "lib_linux_x86_64" in HL2SDK_BRANCHES[branch]
+    target_compatible_with = [] if sixty_four_bit_capable else [
+        "@platforms//cpu:x86_32",
+    ]
 
     hl2sdk = "@hl2sdk_{}//:hl2sdk".format(branch)
     hl2sdk_game_server = "@hl2sdk_{}//:hl2sdk_game_server".format(branch)
@@ -616,4 +629,5 @@ def sourcemod_game_server(
         ],
         visibility = visibility,
         tags = tags,
+        target_compatible_with = target_compatible_with,
     )

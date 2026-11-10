@@ -81,7 +81,7 @@ HL2SDK_BRANCHES = {
         "lib_windows_x86_64": "lib/public/x64",
     },
     "tf2": {
-        "commit": "73ecbbe946955a70409bcf7ee4ddf1105ad4231b",
+        "commit": "764e759c878c0f18e199f0048cbd3c025d73cf88",
         "code": 12,
         "define": "TF2",
         "extension": "2.tf2",
