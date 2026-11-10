@@ -139,6 +139,8 @@ test_suite(
         ":extension_reports_package_info_test",
         ":plugin_installs_into_plugins_dir_test",
         ":plugin_reports_package_info_test",
+        "//sourcemod:loader_resolves_its_symbols_test",
+        "//sourcemod:logic_resolves_its_symbols_test",
     ],
     visibility = ["//visibility:public"],
 )

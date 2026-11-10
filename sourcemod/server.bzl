@@ -258,9 +258,8 @@ def sourcemod_game_server(
     # Logic — sourcemod.logic.so
     # Pure C++; depends on SourceHook (from MetaMod headers) but no HL2SDK.
     #
-    # :sourcepawn_vm because core/logic/common_logic.cpp calls
-    # sp::Environment::New() directly to get the SourcePawn VM -- see
-    # @sourcemod_sdk//:sourcepawn_vm's comment.
+    # No SourcePawn VM here: core loads it at runtime out of
+    # @sourcemod_sdk//:sourcepawn_vm_shared, packaged below.
     # -----------------------------------------------------------------------
     cc_library(
         name = p + "logic_lib",
@@ -269,7 +268,6 @@ def sourcemod_game_server(
         defines = ["SM_DEFAULT_THREADER", "SM_LOGIC"],
         deps = [
             _SM + "//:sm_root_hdrs",
-            _SM + "//:sourcepawn_vm",
             metamod_headers,
         ],
         alwayslink = True,
@@ -444,24 +442,42 @@ def sourcemod_game_server(
         tags = tags,
     )
 
-    # Core and logic live in bin/x64/ on a 64-bit target, bin/ directly on a
-    # 32-bit one. No separate SourcePawn runtime file to package -- logic_lib
-    # above statically links the VM directly.
+    # Core, logic and the SourcePawn runtime live in bin/x64/ on a 64-bit
+    # target, bin/ directly on a 32-bit one.
+    #
+    # The runtime is the one file whose *name* also changes with the
+    # architecture: upstream's PackageScript ships it as `sourcepawn.vm` on
+    # x86_64 and `sourcepawn.jit.x86` on x86, and core's LoadJIT asks for
+    # whichever of the two matches the build it is part of, so getting this
+    # wrong is a server that comes up with no SourceMod. It is also the one
+    # file here that is not per-branch: the same shared object serves every
+    # preset.
+    _bin_renames = {
+        ":" + p + "core": "sourcemod.{}.so".format(ext),
+        ":" + p + "logic": "sourcemod.logic.so",
+    }
     pkg_files(
         name = p + "bin_x64_files",
         attributes = pkg_attributes(mode = "0755"),
         srcs = [
             ":" + p + "core",
             ":" + p + "logic",
+            _SM + "//:sourcepawn_vm_shared",
         ],
         prefix = select({
             _X86_64: "addons/sourcemod/bin/x64",
             "//conditions:default": "addons/sourcemod/bin",
         }),
-        renames = {
-            ":" + p + "core": "sourcemod.{}.so".format(ext),
-            ":" + p + "logic": "sourcemod.logic.so",
-        },
+        renames = select({
+            _X86_64: dict(
+                _bin_renames,
+                **{_SM + "//:sourcepawn_vm_shared": "sourcepawn.vm.so"}
+            ),
+            "//conditions:default": dict(
+                _bin_renames,
+                **{_SM + "//:sourcepawn_vm_shared": "sourcepawn.jit.x86.so"}
+            ),
+        }),
         visibility = _PRIVATE,
         tags = tags,
     )

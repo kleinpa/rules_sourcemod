@@ -172,18 +172,15 @@ _SPCOMP_DEFINES = select({
     "//conditions:default": [],
 })
 
-# The SourcePawn VM. Linked into spcomp because the assembler runs each freshly
-# built binary through the VM's verifier before writing it out, and directly
-# into sourcemod/server.bzl's logic_lib (sourcemod.logic.so): core/logic's
-# common_logic.cpp calls sp::Environment::New() directly to get the VM, so
-# the VM has to be compiled into whatever calls that, not shipped separately
-# for core to dlopen -- see that macro's `logic_lib` cc_library.
+# The SourcePawn VM. Linked into spcomp, because the assembler runs each
+# freshly built binary through the VM's verifier before writing it out, and
+# into :sourcepawn_vm_shared, the runtime SourceMod dlopens. Nothing else
+# links it: SourceMod reaches the VM only through the factory function that
+# shared object exports.
 #
-# alwayslink because logic_lib's own translation units reach the VM only
-# through sp::Environment::New() and similar factory calls, not by direct
-# symbol reference to individual VM registration code: the VM's native
-# registrations run from static initializers that nothing else references
-# directly, so without alwayslink the linker would drop them as unreachable.
+# alwayslink because the VM's native registrations run from static
+# initializers that nothing references by symbol, so a linker free to drop
+# unreachable objects would drop them.
 cc_library(
     name = "sourcepawn_vm",
     srcs = SPCOMP_VM_SRCS + select({
@@ -246,6 +243,30 @@ _SPCOMP_LINKOPTS = select({
     "@platforms//os:windows": ["user32.lib"],
     "//conditions:default": [],
 })
+
+# The SourcePawn runtime, which SourceMod ships as its own shared object
+# rather than linking into anything: core's LoadJIT (core/sourcemod.cpp)
+# dlopens bin/x64/sourcepawn.vm.so and asks it for GetSourcePawnFactory. A
+# server without this file loads no SourceMod at all -- Metamod reports
+# "Failed to load plugin addons/sourcemod/bin/sourcemod_mm" naming the
+# missing library, and `sm` is an unknown command.
+#
+# dll_exports.cpp is the whole of its own source, as in upstream's
+# BuildDynamicCoreLib: everything else is the same static core library spcomp
+# links (compiler + libsmx + vm), which :sourcepawn_compiler brings in. The
+# filename the loader wants depends on the architecture and is applied when
+# the file is packaged, in //sourcemod:server.bzl.
+cc_binary(
+    name = "sourcepawn_vm_shared",
+    srcs = ["sourcepawn/vm/dll_exports.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    linkshared = True,
+    deps = [
+        ":sourcepawn_compiler",
+        ":sourcepawn_internal_headers",
+    ],
+)
 
 cc_binary(
     name = "spcomp",
@@ -353,7 +374,18 @@ filegroup(
         "core/logic/TextParsers.cpp",
         "core/logic/ThreadSupport.cpp",
         "core/logic/Translator.cpp",
-    ],
+    ] + select({
+        # PseudoAddressManager hands plugins a 32-bit handle for a 64-bit
+        # pointer, so it exists only on a 64-bit target -- upstream's
+        # core/logic/AMBuilder adds it under the same condition. Omitting it
+        # here left sourcemod.logic.so with an undefined
+        # PseudoAddressManager::FromPseudoAddress, which links fine (it is a
+        # shared object) and fails at dlopen: Metamod reports "Failed to load
+        # plugin addons/sourcemod/bin/sourcemod_mm" and the server comes up
+        # with no SourceMod at all.
+        "@platforms//cpu:x86_64": ["core/logic/PseudoAddrManager.cpp"],
+        "//conditions:default": [],
+    }),
 )
 
 # CSS core: the 36-file common set + smn_bitbuffer.cpp + vprof_tool.cpp.

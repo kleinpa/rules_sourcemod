@@ -1,3 +1,4 @@
+load("//tests:symbol_closure_test.bzl", "symbol_closure_test")
 load(":server.bzl", "sourcemod_game_server")
 
 package(default_visibility = ["//visibility:public"])
@@ -31,9 +32,12 @@ exports_files([
 # sourcemod_sdk2013 needs no per-mod variant: every SDK2013 mod wants the
 # same binaries, and installs them at whatever path package_dir says.
 #
-# Each is tagged manual so `bazel build //...` in this repo doesn't fetch and
-# compile the whole HL2SDK/Metamod/SourceMod tree, times five branches, on
-# every run; //tests:game_server_tests builds them explicitly.
+# css and tf2 build on every run, which is what gives //tests its only
+# coverage of a complete server. The other three are tagged manual so
+# `bazel build //...` does not fetch and compile the whole
+# HL2SDK/Metamod/SourceMod tree five times over; //tests:game_server_tests
+# names all five explicitly, and skips the ones that cannot build for the
+# target platform.
 #
 # Named for the game, which for css/tf2/l4d2 is a straight 1:1 with the
 # branch. sourcemod_sdk2013 is the odd one out -- sdk2013 is a generic
@@ -71,4 +75,21 @@ sourcemod_game_server(
     name = "sourcemod_ep1",
     branch = "ep1",
     tags = ["manual"],
+)
+
+# The loader and sourcemod.logic.so link against neither the HL2SDK nor the
+# engine, so every symbol they reference has to be satisfied within the
+# library and its DT_NEEDED -- unlike core and the extensions, which leave
+# engine symbols for srcds to resolve. That makes these two the part of a
+# server image whose load can be checked without starting a game; see
+# //tests:symbol_closure_test.bzl for what a failure here looks like in
+# srcds. One branch is enough: neither library's sources vary by branch.
+symbol_closure_test(
+    name = "loader_resolves_its_symbols_test",
+    lib = ":sourcemod_cstrike_loader",
+)
+
+symbol_closure_test(
+    name = "logic_resolves_its_symbols_test",
+    lib = ":sourcemod_cstrike_logic",
 )

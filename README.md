@@ -76,7 +76,7 @@ rules.
 This module tracks SourceMod's **stable** branch, 1.12, which is what the
 plugin ecosystem compiles against; it emits SourcePawn 1 bytecode. The 1.13
 development branch carries SourcePawn 2 (a second compiler, a new VM, and a
-C++20 build); the `v2` tag holds a working build of it, to pick up again once
+C++20 build); the `v2` tag is where that work is kept, to pick up again once
 1.13 is promoted to stable.
 
 Both rules report their install path via rules_pkg's `PackageFilesInfo`, so

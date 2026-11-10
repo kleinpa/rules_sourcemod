@@ -59,8 +59,9 @@ SPCOMP_LIBSMX_SRCS = [
 #
 # The compiler links the VM because `assembler.cpp` runs the freshly assembled
 # binary through `ISourcePawnEnvironment` to verify it before writing the .smx.
-# `dll_exports.cpp` is excluded: it belongs to the libsourcepawn shared
-# library, which nothing here builds.
+# `dll_exports.cpp` is excluded: it is the only source of its own of the
+# libsourcepawn shared library, built as @sourcemod_sdk//:sourcepawn_vm_shared
+# and shipped as the `sourcepawn.vm` the server dlopens.
 SPCOMP_VM_SRCS = [
     "sourcepawn/vm/api.cpp",
     "sourcepawn/vm/base-context.cpp",
