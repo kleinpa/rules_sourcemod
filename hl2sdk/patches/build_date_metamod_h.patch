@@ -1,0 +1,11 @@
+--- a/core/metamod.h
++++ b/core/metamod.h
+@@ -47,7 +47,7 @@
+  *   increase api_minor when new functions are added (non-breaking)
+  */
+ #define SOURCEMM_VERSION	SVN_FILE_VERSION_STRING
+-#define SOURCEMM_DATE		__DATE__
++#define SOURCEMM_DATE		"Jan  1 1980"
+ #define METAMOD_API_MAJOR	2		/* increase this on a breaking change */
+ #define METAMOD_API_MINOR	0		/* increase this on a non-breaking API change */
+ 

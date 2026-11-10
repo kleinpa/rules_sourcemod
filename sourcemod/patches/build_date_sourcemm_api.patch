@@ -1,0 +1,11 @@
+--- a/core/sourcemm_api.cpp
++++ b/core/sourcemm_api.cpp
+@@ -180,7 +180,7 @@
+ 
+ const char *SourceMod_Core::GetDate()
+ {
+-	return __DATE__;
++	return "Jan  1 1980";
+ }
+ 
+ const char *SourceMod_Core::GetLogTag()

@@ -1,6 +1,7 @@
 """`sourcemod_plugin` — compiles a SourcePawn source file into a .smx plugin."""
 
 load("@rules_pkg//pkg:providers.bzl", "PackageFilesInfo")
+load("//sourcemod:build_date.bzl", "BUILD_DATE_EPOCH")
 load("//sourcemod:providers.bzl", "SourceModPackageInfo", "package_providers")
 
 def _sourcemod_plugin_impl(ctx):
@@ -58,8 +59,16 @@ def _sourcemod_plugin_impl(ctx):
         outputs = [smx],
         mnemonic = "SpcompCompile",
         progress_message = "Compiling SourcePawn plugin %{label}",
-        # spcomp writes intermediates next to its inputs and reads no ambient
-        # state; caching is safe.
+        # spcomp reads the wall clock and injects the result as SourcePawn's
+        # __DATE__/__TIME__, which plugins/include/core.inc copies into every
+        # plugin's `__version` struct -- so without this, two builds of the same
+        # .sp produce different .smx files and every cached plugin expires at
+        # midnight. The spcomp //sourcemod:patches teaches SOURCE_DATE_EPOCH is
+        # the one this module's toolchain registers; a consumer who registers an
+        # unpatched one of their own simply gets upstream's behaviour back.
+        env = {"SOURCE_DATE_EPOCH": BUILD_DATE_EPOCH},
+        # Beyond the clock read above, spcomp writes intermediates next to its
+        # inputs and reads no ambient state; caching is safe.
         execution_requirements = {"supports-workers": "0"},
     )
 
