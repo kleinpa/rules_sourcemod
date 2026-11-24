@@ -1,0 +1,90 @@
+"""Build overlay for Metamod:Source (copied in by //hl2sdk:repositories.bzl)."""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_sourcemod//hl2sdk:metamod.bzl", "CORE_COPTS", "PLATFORM_DEFINES", "metamod_core")
+load("@rules_sourcemod//private:flags.bzl", "UPSTREAM_WINDOWS_LINKOPTS", "WINDOWS_CRT_FEATURES")
+load("@rules_sourcemod//private:shared_lib.bzl", "shared_lib_output")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])
+
+exports_files([
+    "support/metamod.vdf",
+    "support/metamod_linux64.vdf",
+    "support/metamod_win64.vdf",
+])
+
+cc_library(
+    name = "metamod_headers",
+    hdrs = glob(
+        [
+            "core/*.h",
+            "core/sourcehook/*.h",
+            "public/*.h",
+        ],
+        allow_empty = False,
+    ),
+    includes = [
+        "core",
+        "core/sourcehook",
+        "public",
+    ],
+)
+
+# Loader shim (`addons/metamod/bin[/linux64|/win64]/server.<so|dll>`), which
+# detects the engine backend at startup and dlopens `metamod.<ext>.<so|dll>`.
+cc_binary(
+    name = "_loader_so",
+    srcs = glob([
+        "loader/*.cpp",
+        "loader/*.h",
+    ]),
+    copts = CORE_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }) + UPSTREAM_WINDOWS_LINKOPTS,
+    linkshared = True,
+    local_defines = PLATFORM_DEFINES + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "LIB_PREFIX=\\\"\\\"",
+            "LIB_SUFFIX=\\\".so\\\"",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":metamod_headers"],
+)
+
+shared_lib_output(
+    name = "metamod_loader",
+    binary = ":_loader_so",
+)
+
+cc_library(
+    name = "metamod_core_headers",
+    hdrs = glob([
+        "core/provider/*.h",
+        "loader/*.h",
+        "third_party/amtl/amtl/**/*.h",
+    ]),
+    includes = [
+        "core/provider",
+        "loader",
+        "third_party/amtl",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# One core per branch in //hl2sdk:repositories.bzl's HL2SDK_BRANCHES.
+metamod_core(branch = "css")
+
+metamod_core(branch = "tf2")
+
+metamod_core(branch = "l4d2")
+
+metamod_core(branch = "sdk2013")
+
+metamod_core(branch = "ep1")

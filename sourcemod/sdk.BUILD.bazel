@@ -1,0 +1,1062 @@
+"""Build overlay for `@sourcemod_sdk`."""
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load(
+    "@rules_sourcemod//private:flags.bzl",
+    "SERVER_COPTS",
+    "SERVER_LINKOPTS",
+    "SOURCEMOD_PLATFORM_DEFINES",
+    "UPSTREAM_WARNING_COPTS",
+    "UPSTREAM_WINDOWS_LINKOPTS",
+    "WINDOWS_CRT_FEATURES",
+)
+load("@rules_sourcemod//private:shared_lib.bzl", "shared_lib_output")
+load("@rules_sourcemod//sourcemod:plugins.bzl", "BUNDLED_PLUGINS")
+load("@rules_sourcemod//spcomp:plugin.bzl", "sourcemod_plugin")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])  # GPL-3.0 with linking exception for extensions.
+
+exports_files(["public/smsdk_ext.cpp"])
+
+cc_library(
+    name = "amtl",
+    hdrs = glob(
+        [
+            "public/amtl/amtl/**/*.h",
+            "public/amtl/**/*.h",
+        ],
+        allow_empty = False,
+    ),
+    includes = [
+        "public/amtl",
+        "public/amtl/amtl",
+    ],
+)
+
+cc_library(
+    name = "sourcepawn_headers",
+    hdrs = glob(["sourcepawn/include/**/*.h"], allow_empty = False),
+    includes = ["sourcepawn/include"],
+    deps = [":amtl"],
+)
+
+cc_library(
+    name = "sourcemod_headers",
+    hdrs = glob(
+        [
+            "public/*.h",
+            "public/extensions/*.h",
+        ],
+        allow_empty = False,
+    ),
+    defines = SOURCEMOD_PLATFORM_DEFINES,
+    includes = [
+        "public",
+        "public/extensions",
+    ],
+    deps = [
+        ":amtl",
+        ":sourcepawn_headers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# SourcePawn compiler (spcomp) and runtime VM
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "zlib",
+    srcs = glob(["sourcepawn/third_party/zlib/*.c"], allow_empty = False),
+    hdrs = glob(["sourcepawn/third_party/zlib/*.h"], allow_empty = False),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["-Wno-implicit-function-declaration"],
+    }),
+    features = WINDOWS_CRT_FEATURES,
+    includes = [
+        "sourcepawn/third_party",
+        "sourcepawn/third_party/zlib",
+    ],
+)
+
+cc_library(
+    name = "sourcepawn_internal_headers",
+    hdrs = glob(
+        [
+            "sourcepawn/compiler/**/*.h",
+            "sourcepawn/libsmx/*.h",
+            "sourcepawn/shared/*.h",
+            "sourcepawn/vm/**/*.h",
+        ],
+        allow_empty = False,
+    ) + ["generated/sourcemod_version.h"],  # Written by //sourcemod:repositories.bzl.
+    includes = [
+        "generated",
+        "sourcepawn",
+        "sourcepawn/vm",
+    ],
+    deps = [
+        ":amtl",
+        ":sourcepawn_headers",
+    ],
+)
+
+_SPCOMP_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+}) + UPSTREAM_WARNING_COPTS
+
+_SPCOMP_DEFINES = select({
+    "@platforms//os:linux": ["_GNU_SOURCE"],
+    "@platforms//os:windows": ["WIN32", "_WINDOWS"],
+    "//conditions:default": [],
+})
+
+# Sources mirror sourcepawn's vm/, libsmx/ and compiler/ AMBuilder files.
+cc_library(
+    name = "sourcepawn_vm",
+    srcs = [
+        "sourcepawn/vm/api.cpp",
+        "sourcepawn/vm/base-context.cpp",
+        "sourcepawn/vm/builtins.cpp",
+        "sourcepawn/vm/code-allocator.cpp",
+        "sourcepawn/vm/code-stubs.cpp",
+        "sourcepawn/vm/compiled-function.cpp",
+        "sourcepawn/vm/control-flow.cpp",
+        "sourcepawn/vm/debugging.cpp",
+        "sourcepawn/vm/debug-metadata.cpp",
+        "sourcepawn/vm/environment.cpp",
+        "sourcepawn/vm/file-utils.cpp",
+        "sourcepawn/vm/graph-builder.cpp",
+        "sourcepawn/vm/interpreter.cpp",
+        "sourcepawn/vm/md5/md5.cpp",
+        "sourcepawn/vm/method-info.cpp",
+        "sourcepawn/vm/method-verifier.cpp",
+        "sourcepawn/vm/opcodes.cpp",
+        "sourcepawn/vm/plugin-context.cpp",
+        "sourcepawn/vm/plugin-runtime.cpp",
+        "sourcepawn/vm/pool-allocator.cpp",
+        "sourcepawn/vm/rtti.cpp",
+        "sourcepawn/vm/runtime-helpers.cpp",
+        "sourcepawn/vm/scripted-invoker.cpp",
+        "sourcepawn/vm/smx-v1-image.cpp",
+        "sourcepawn/vm/stack-frames.cpp",
+        "sourcepawn/vm/watchdog_timer.cpp",
+    ] + select({
+        # Upstream's JIT is x86-only; x86_64 interprets bytecode.
+        "@platforms//cpu:x86_32": [
+            "sourcepawn/vm/jit.cpp",
+            "sourcepawn/vm/linking.cpp",
+            "sourcepawn/vm/x86/assembler-x86.cpp",
+            "sourcepawn/vm/x86/code-stubs-x86.cpp",
+            "sourcepawn/vm/x86/jit_x86.cpp",
+        ],
+        "//conditions:default": [
+            "sourcepawn/vm/x64/assembler-x64.cpp",
+            "sourcepawn/vm/x64/code-stubs-x64.cpp",
+            "sourcepawn/vm/x64/macro-assembler-x64.cpp",
+        ],
+    }),
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES + select({
+        "@platforms//cpu:x86_32": ["SP_HAS_JIT"],
+        "//conditions:default": [],
+    }),
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":zlib",
+    ],
+    alwayslink = True,
+)
+
+# `driver.cpp` holds main() and is added on the `spcomp` cc_binary.
+cc_library(
+    name = "sourcepawn_compiler",
+    srcs = [
+        "public/amtl/amtl/experimental/am-argparser.cpp",
+        "sourcepawn/compiler/array-helpers.cpp",
+        "sourcepawn/compiler/assembler.cpp",
+        "sourcepawn/compiler/builtin-generator.cpp",
+        "sourcepawn/compiler/code-generator.cpp",
+        "sourcepawn/compiler/compile-context.cpp",
+        "sourcepawn/compiler/data-queue.cpp",
+        "sourcepawn/compiler/errors.cpp",
+        "sourcepawn/compiler/expressions.cpp",
+        "sourcepawn/compiler/lexer.cpp",
+        "sourcepawn/compiler/main.cpp",
+        "sourcepawn/compiler/name-resolution.cpp",
+        "sourcepawn/compiler/parse-node.cpp",
+        "sourcepawn/compiler/parser.cpp",
+        "sourcepawn/compiler/pool-allocator.cpp",
+        "sourcepawn/compiler/pool-objects.cpp",
+        "sourcepawn/compiler/sci18n.cpp",
+        "sourcepawn/compiler/scopes.cpp",
+        "sourcepawn/compiler/sctracker.cpp",
+        "sourcepawn/compiler/semantics.cpp",
+        "sourcepawn/compiler/source-file.cpp",
+        "sourcepawn/compiler/source-manager.cpp",
+        "sourcepawn/compiler/symbols.cpp",
+        "sourcepawn/compiler/type-checker.cpp",
+        "sourcepawn/compiler/types.cpp",
+        "sourcepawn/libsmx/data-pool.cpp",
+        "sourcepawn/libsmx/smx-builder.cpp",
+    ],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    features = WINDOWS_CRT_FEATURES,
+    deps = [
+        ":sourcepawn_internal_headers",
+        ":sourcepawn_vm",
+        ":zlib",
+    ],
+)
+
+_SPCOMP_LINKOPTS = select({
+    "@platforms//os:windows": ["user32.lib"],
+    "//conditions:default": [],
+})
+
+# Shared runtime dlopen'd by SourceMod core (`sourcepawn.vm` on x64, `sourcepawn.jit.x86` on x86).
+cc_binary(
+    name = "sourcepawn_vm_bin",
+    srcs = ["sourcepawn/vm/dll_exports.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = _SPCOMP_LINKOPTS,
+    linkshared = True,
+    deps = [
+        ":sourcepawn_compiler",
+        ":sourcepawn_internal_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "sourcepawn_vm_shared",
+    binary = ":sourcepawn_vm_bin",
+)
+
+cc_binary(
+    name = "spcomp",
+    srcs = ["sourcepawn/compiler/driver.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = _SPCOMP_LINKOPTS,
+    deps = [
+        ":sourcepawn_compiler",
+        ":sourcepawn_internal_headers",
+    ],
+)
+
+# Standalone SourcePawn VM runner (`public main()`) used by `sourcemod_test`.
+cc_binary(
+    name = "spshell",
+    srcs = ["sourcepawn/vm/shell/shell.cpp"],
+    copts = _SPCOMP_COPTS,
+    defines = _SPCOMP_DEFINES + select({
+        "@platforms//cpu:x86_32": ["SP_HAS_JIT"],
+        "//conditions:default": [],
+    }),
+    features = WINDOWS_CRT_FEATURES,
+    deps = [
+        ":sourcepawn_compiler",
+        ":sourcepawn_internal_headers",
+    ],
+)
+
+filegroup(
+    name = "spcomp_stdlib_includes",
+    srcs = glob(["plugins/include/**/*.inc"], allow_empty = False),
+)
+
+# ---------------------------------------------------------------------------
+# Server-side compilation inputs (consumed by //sourcemod:server.bzl)
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "loader_srcs",
+    srcs = ["loader/loader.cpp"],
+)
+
+filegroup(
+    name = "logic_srcs",
+    srcs = [
+        "core/logic/AdminCache.cpp",
+        "core/logic/ADTFactory.cpp",
+        "core/logic/BaseWorker.cpp",
+        "core/logic/CDataPack.cpp",
+        "core/logic/common_logic.cpp",
+        "core/logic/DatabaseConfBuilder.cpp",
+        "core/logic/Database.cpp",
+        "core/logic/DebugReporter.cpp",
+        "core/logic/ExtensionSys.cpp",
+        "core/logic/ForwardSys.cpp",
+        "core/logic/FrameIterator.cpp",
+        "core/logic/frame_tasks.cpp",
+        "core/logic/GameConfigs.cpp",
+        "core/logic/HandleSys.cpp",
+        "core/logic/LibrarySys.cpp",
+        "core/logic/Logger.cpp",
+        "core/logic/LumpManager.cpp",
+        "core/logic/MemoryUtils.cpp",
+        "core/logic/NativeOwner.cpp",
+        "core/logic/PhraseCollection.cpp",
+        "core/logic/PluginSys.cpp",
+        "core/logic/ProfileTools.cpp",
+        "core/logic/RootConsoleMenu.cpp",
+        "core/logic/ShareSys.cpp",
+        "core/logic/sm_crc32.cpp",
+        "core/logic/smn_admin.cpp",
+        "core/logic/smn_adt_array.cpp",
+        "core/logic/smn_adt_stack.cpp",
+        "core/logic/smn_adt_trie.cpp",
+        "core/logic/smn_banning.cpp",
+        "core/logic/smn_console.cpp",
+        "core/logic/smn_core.cpp",
+        "core/logic/smn_database.cpp",
+        "core/logic/smn_datapacks.cpp",
+        "core/logic/smn_entitylump.cpp",
+        "core/logic/smn_fakenatives.cpp",
+        "core/logic/smn_filesystem.cpp",
+        "core/logic/smn_float.cpp",
+        "core/logic/smn_functions.cpp",
+        "core/logic/smn_gameconfigs.cpp",
+        "core/logic/smn_halflife.cpp",
+        "core/logic/smn_handles.cpp",
+        "core/logic/smn_lang.cpp",
+        "core/logic/smn_maplists.cpp",
+        "core/logic/smn_menus.cpp",
+        "core/logic/smn_players.cpp",
+        "core/logic/smn_profiler.cpp",
+        "core/logic/smn_sorting.cpp",
+        "core/logic/smn_string.cpp",
+        "core/logic/smn_textparse.cpp",
+        "core/logic/smn_timers.cpp",
+        "core/logic/sm_trie.cpp",
+        "core/logic/sprintf.cpp",
+        "core/logic/stringutil.cpp",
+        "core/logic/TextParsers.cpp",
+        "core/logic/ThreadSupport.cpp",
+        "core/logic/Translator.cpp",
+    ] + select({
+        "@platforms//cpu:x86_64": ["core/logic/PseudoAddrManager.cpp"],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "core_srcs",
+    srcs = [
+        "core/ChatTriggers.cpp",
+        "core/concmd_cleaner.cpp",
+        "core/ConCmdManager.cpp",
+        "core/ConsoleDetours.cpp",
+        "core/ConVarManager.cpp",
+        "core/CoreConfig.cpp",
+        "core/EventManager.cpp",
+        "core/frame_hooks.cpp",
+        "core/GameHooks.cpp",
+        "core/HalfLife2.cpp",
+        "core/Logger.cpp",
+        "core/logic_bridge.cpp",
+        "core/MenuManager.cpp",
+        "core/MenuStyle_Base.cpp",
+        "core/MenuStyle_Radio.cpp",
+        "core/MenuStyle_Valve.cpp",
+        "core/MenuVoting.cpp",
+        "core/NextMap.cpp",
+        "core/PlayerManager.cpp",
+        "core/sm_autonatives.cpp",
+        "core/smn_bitbuffer.cpp",
+        "core/smn_commandline.cpp",
+        "core/smn_console.cpp",
+        "core/smn_entities.cpp",
+        "core/smn_events.cpp",
+        "core/smn_halflife.cpp",
+        "core/smn_hudtext.cpp",
+        "core/smn_keyvalues.cpp",
+        "core/smn_nextmap.cpp",
+        "core/smn_player.cpp",
+        "core/smn_usermsgs.cpp",
+        "core/smn_vector.cpp",
+        "core/sm_stringutil.cpp",
+        "core/sourcemm_api.cpp",
+        "core/sourcemod.cpp",
+        "core/TimerSys.cpp",
+        "core/UserMessages.cpp",
+        "core/vprof_tool.cpp",
+    ],
+)
+
+filegroup(
+    name = "sdktools_srcs",
+    srcs = [
+        "extensions/sdktools/clientnatives.cpp",
+        "extensions/sdktools/extension.cpp",
+        "extensions/sdktools/gamerulesnatives.cpp",
+        "extensions/sdktools/hooks.cpp",
+        "extensions/sdktools/inputnatives.cpp",
+        "extensions/sdktools/output.cpp",
+        "extensions/sdktools/outputnatives.cpp",
+        "extensions/sdktools/teamnatives.cpp",
+        "extensions/sdktools/tempents.cpp",
+        "extensions/sdktools/tenatives.cpp",
+        "extensions/sdktools/trnatives.cpp",
+        "extensions/sdktools/variant-t.cpp",
+        "extensions/sdktools/vcallbuilder.cpp",
+        "extensions/sdktools/vcaller.cpp",
+        "extensions/sdktools/vdecoder.cpp",
+        "extensions/sdktools/vglobals.cpp",
+        "extensions/sdktools/vhelpers.cpp",
+        "extensions/sdktools/vnatives.cpp",
+        "extensions/sdktools/voice.cpp",
+        "extensions/sdktools/vsound.cpp",
+        "extensions/sdktools/vstringtable.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+filegroup(
+    name = "sdkhooks_srcs",
+    srcs = [
+        "extensions/sdkhooks/extension.cpp",
+        "extensions/sdkhooks/natives.cpp",
+        "extensions/sdkhooks/takedamageinfohack.cpp",
+        "extensions/sdkhooks/util.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+# rulesfix.cpp is csgo-only and omitted.
+filegroup(
+    name = "cstrike_srcs",
+    srcs = [
+        "extensions/cstrike/extension.cpp",
+        "extensions/cstrike/forwards.cpp",
+        "extensions/cstrike/natives.cpp",
+        "extensions/cstrike/RegNatives.cpp",
+        "extensions/cstrike/timeleft.cpp",
+        "extensions/cstrike/util_cstrike.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+filegroup(
+    name = "tf2_srcs",
+    srcs = [
+        "extensions/tf2/extension.cpp",
+        "extensions/tf2/natives.cpp",
+        "extensions/tf2/RegNatives.cpp",
+        "extensions/tf2/util.cpp",
+        "extensions/tf2/criticals.cpp",
+        "extensions/tf2/holiday.cpp",
+        "extensions/tf2/teleporter.cpp",
+        "extensions/tf2/gameplayrules.cpp",
+        "extensions/tf2/conditions.cpp",
+        "public/smsdk_ext.cpp",
+        "public/CDetour/detours.cpp",
+    ],
+)
+
+filegroup(
+    name = "topmenus_srcs",
+    srcs = [
+        "extensions/topmenus/extension.cpp",
+        "extensions/topmenus/smn_topmenus.cpp",
+        "extensions/topmenus/TopMenu.cpp",
+        "extensions/topmenus/TopMenuManager.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+# HookWrapper.cpp and jit_hook.cpp are dead files omitted by upstream's AMBuilder.
+filegroup(
+    name = "bintools_srcs",
+    srcs = [
+        "extensions/bintools/CallMaker.cpp",
+        "extensions/bintools/CallWrapper.cpp",
+        "extensions/bintools/extension.cpp",
+        "public/smsdk_ext.cpp",
+    ] + select({
+        "@platforms//cpu:x86_32": ["extensions/bintools/jit_call.cpp"],
+        "//conditions:default": ["extensions/bintools/jit_call_x64.cpp"],
+    }),
+)
+
+filegroup(
+    name = "clientprefs_srcs",
+    srcs = [
+        "extensions/clientprefs/cookie.cpp",
+        "extensions/clientprefs/extension.cpp",
+        "extensions/clientprefs/menus.cpp",
+        "extensions/clientprefs/natives.cpp",
+        "extensions/clientprefs/query.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+# SQLite C amalgamation compiled once per platform rather than per engine branch.
+cc_library(
+    name = "sqlite3",
+    srcs = ["extensions/sqlite/sqlite-source/sqlite3.c"],
+    hdrs = glob(["extensions/sqlite/sqlite-source/*.h"], allow_empty = False),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-fPIC",
+            "-w",
+        ],
+    }),
+    defines = [
+        "SQLITE_ALLOW_URI_AUTHORITY",
+        "SQLITE_ENABLE_MATH_FUNCTIONS",
+        "SQLITE_OMIT_LOAD_EXTENSION",
+        "SQLITE_THREADSAFE",
+        "SQLITE_USE_URI",
+    ],
+    features = WINDOWS_CRT_FEATURES,
+    includes = ["extensions/sqlite/sqlite-source"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "sqlite_srcs",
+    srcs = [
+        "extensions/sqlite/driver/SqDatabase.cpp",
+        "extensions/sqlite/driver/SqDriver.cpp",
+        "extensions/sqlite/driver/SqQuery.cpp",
+        "extensions/sqlite/driver/SqResults.cpp",
+        "extensions/sqlite/extension.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+cc_library(
+    name = "maxminddb",
+    srcs = [
+        "extensions/geoip/data-pool.c",
+        "extensions/geoip/maxminddb.c",
+    ],
+    hdrs = glob(["extensions/geoip/*.h"], allow_empty = False),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-fPIC",
+            "-w",
+        ],
+    }),
+    features = WINDOWS_CRT_FEATURES,
+    includes = ["extensions/geoip"],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "wsock32.lib",
+            "ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [":sourcemod_headers"],
+)
+
+filegroup(
+    name = "geoip_srcs",
+    srcs = [
+        "extensions/geoip/extension.cpp",
+        "extensions/geoip/geoip_util.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+cc_import(
+    name = "pcre_linux_x86_32",
+    static_library = "extensions/regex/lib_linux/libpcre.a",
+)
+
+cc_import(
+    name = "pcre_linux_x86_64",
+    static_library = "extensions/regex/lib_linux64/libpcre.a",
+)
+
+cc_import(
+    name = "pcre_windows_x86_32",
+    static_library = "extensions/regex/lib_win/pcre.lib",
+)
+
+cc_import(
+    name = "pcre_windows_x86_64",
+    static_library = "extensions/regex/lib_win64/pcre.lib",
+)
+
+alias(
+    name = "pcre_import",
+    actual = select({
+        "@rules_sourcemod//platforms:is_linux_x86_32": ":pcre_linux_x86_32",
+        "@rules_sourcemod//platforms:is_windows_x86_32": ":pcre_windows_x86_32",
+        "@rules_sourcemod//platforms:is_windows_x86_64": ":pcre_windows_x86_64",
+        "//conditions:default": ":pcre_linux_x86_64",
+    }),
+)
+
+filegroup(
+    name = "regex_srcs",
+    srcs = [
+        "extensions/regex/CRegEx.cpp",
+        "extensions/regex/extension.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+filegroup(
+    name = "webternet_srcs",
+    srcs = [
+        "extensions/curl/curlapi.cpp",
+        "extensions/curl/extension.cpp",
+        "public/smsdk_ext.cpp",
+    ],
+)
+
+cc_library(
+    name = "sm_root_hdrs",
+    hdrs = glob([
+        "core/*.h",
+        "core/logic/*.h",
+        "bridge/include/*.h",
+        "versionlib/*.h",
+    ]),
+    includes = [
+        "",
+        "core",
+        "core/logic",
+    ],
+    deps = [
+        ":sourcemod_headers",
+        ":sourcepawn_internal_headers",
+    ],
+)
+
+# safetyhook resets inherited defines/flags in upstream's AMBuilder; compiled isolated.
+cc_library(
+    name = "safetyhook",
+    srcs = [
+        "public/safetyhook/src/allocator.cpp",
+        "public/safetyhook/src/easy.cpp",
+        "public/safetyhook/src/inline_hook.cpp",
+        "public/safetyhook/src/mid_hook.cpp",
+        "public/safetyhook/src/utility.cpp",
+        "public/safetyhook/src/vmt_hook.cpp",
+        "public/safetyhook/zydis/Zydis.c",
+    ] + select({
+        "@platforms//os:windows": ["public/safetyhook/src/os.windows.cpp"],
+        "//conditions:default": ["public/safetyhook/src/os.linux.cpp"],
+    }),
+    hdrs = glob([
+        "public/safetyhook/include/**/*.hpp",
+        "public/safetyhook/zydis/*.h",
+    ]),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/EHsc", "/permissive-"],
+        "//conditions:default": [
+            "-fPIC",
+            "-Wno-unused-function",
+            "-Wno-unused-const-variable",
+        ],
+    }),
+    features = WINDOWS_CRT_FEATURES,
+    includes = [
+        "public/safetyhook/include",
+        "public/safetyhook/zydis",
+    ],
+)
+
+cc_library(
+    name = "cdetour_hdrs",
+    hdrs = glob([
+        "public/CDetour/*.h",
+        "public/jit/*.h",
+        "public/jit/x86/*.h",
+    ]),
+    includes = [
+        "public/CDetour",
+        "public/jit",
+        "public/jit/x86",
+    ],
+    deps = [":safetyhook"],
+)
+
+cc_library(
+    name = "sdktools_hdrs",
+    hdrs = glob(["extensions/sdktools/*.h"]),
+    includes = ["extensions/sdktools"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "sdkhooks_hdrs",
+    hdrs = glob(["extensions/sdkhooks/*.h"]),
+    includes = ["extensions/sdkhooks"],
+    deps = [":sourcemod_headers"],
+)
+
+cc_library(
+    name = "cstrike_hdrs",
+    hdrs = glob(["extensions/cstrike/*.h"]),
+    includes = ["extensions/cstrike"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "tf2_hdrs",
+    hdrs = glob(["extensions/tf2/*.h"]),
+    includes = ["extensions/tf2"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "topmenus_hdrs",
+    hdrs = glob(["extensions/topmenus/*.h"]),
+    includes = ["extensions/topmenus"],
+    deps = [":sourcemod_headers"],
+)
+
+cc_library(
+    name = "bintools_hdrs",
+    hdrs = glob(["extensions/bintools/*.h"]),
+    includes = ["extensions/bintools"],
+    deps = [
+        ":cdetour_hdrs",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "clientprefs_hdrs",
+    hdrs = glob(["extensions/clientprefs/*.h"]),
+    includes = ["extensions/clientprefs"],
+    deps = [":sourcemod_headers"],
+)
+
+cc_library(
+    name = "sqlite_hdrs",
+    hdrs = glob([
+        "extensions/sqlite/*.h",
+        "extensions/sqlite/driver/*.h",
+    ]),
+    includes = [
+        "extensions/sqlite",
+        "extensions/sqlite/driver",
+    ],
+    deps = [
+        ":sourcemod_headers",
+        ":sqlite3",
+    ],
+)
+
+cc_library(
+    name = "geoip_hdrs",
+    hdrs = glob(["extensions/geoip/*.h"]),
+    includes = ["extensions/geoip"],
+    deps = [
+        ":maxminddb",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "regex_hdrs",
+    hdrs = glob(["extensions/regex/*.h"]),
+    includes = ["extensions/regex"],
+    deps = [
+        ":pcre_import",
+        ":sourcemod_headers",
+    ],
+)
+
+cc_library(
+    name = "webternet_hdrs",
+    hdrs = glob(["extensions/curl/*.h"]),
+    includes = ["extensions/curl"],
+    deps = [
+        ":sourcemod_headers",
+        "@sourcemod_curl//:curl",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Engine-independent server binaries (compiled once per OS/CPU across branches)
+# ---------------------------------------------------------------------------
+
+cc_binary(
+    name = "loader_bin",
+    srcs = [":loader_srcs"],
+    copts = SERVER_COPTS,
+    defines = ["META_NO_HL2SDK"],
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }) + UPSTREAM_WINDOWS_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":sourcemod_headers",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "loader",
+    binary = ":loader_bin",
+)
+
+cc_binary(
+    name = "logic_bin",
+    srcs = [":logic_srcs"],
+    copts = SERVER_COPTS,
+    defines = [
+        "SM_DEFAULT_THREADER",
+        "SM_LOGIC",
+    ],
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":sm_root_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "logic",
+    binary = ":logic_bin",
+)
+
+cc_binary(
+    name = "topmenus_bin",
+    srcs = [":topmenus_srcs"],
+    copts = SERVER_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":topmenus_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "topmenus",
+    binary = ":topmenus_bin",
+)
+
+cc_binary(
+    name = "bintools_bin",
+    srcs = [":bintools_srcs"],
+    copts = SERVER_COPTS,
+    defines = ["HOOKING_ENABLED"],
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":bintools_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "bintools",
+    binary = ":bintools_bin",
+)
+
+cc_binary(
+    name = "clientprefs_bin",
+    srcs = [":clientprefs_srcs"],
+    copts = SERVER_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":clientprefs_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "clientprefs",
+    binary = ":clientprefs_bin",
+)
+
+cc_binary(
+    name = "sqlite_bin",
+    srcs = [":sqlite_srcs"],
+    copts = SERVER_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":sqlite_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "sqlite",
+    binary = ":sqlite_bin",
+)
+
+cc_binary(
+    name = "geoip_bin",
+    srcs = [":geoip_srcs"],
+    copts = SERVER_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    linkopts = SERVER_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":geoip_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "geoip",
+    binary = ":geoip_bin",
+)
+
+cc_binary(
+    name = "regex_bin",
+    srcs = [":regex_srcs"],
+    copts = SERVER_COPTS,
+    defines = ["PCRE_STATIC"],
+    features = WINDOWS_CRT_FEATURES,
+    # Upstream's prebuilt 32-bit libpcre.a is not PIC. GNU ld quietly keeps the
+    # text relocations; lld refuses unless told to, so say so explicitly.
+    linkopts = SERVER_LINKOPTS + select({
+        "@rules_sourcemod//platforms:is_linux_x86_32": ["-Wl,-z,notext"],
+        "//conditions:default": [],
+    }),
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":regex_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "regex",
+    binary = ":regex_bin",
+)
+
+cc_binary(
+    name = "webternet_bin",
+    srcs = [":webternet_srcs"],
+    copts = SERVER_COPTS,
+    features = WINDOWS_CRT_FEATURES,
+    # Hide static BoringSSL / libcurl symbols on Linux so they never interpose
+    # with OpenSSL symbols in steamclient.so or other extensions.
+    linkopts = SERVER_LINKOPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-Wl,--exclude-libs,ALL"],
+    }),
+    linkshared = True,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":webternet_hdrs",
+        "@metamod_source//:metamod_headers",
+    ],
+)
+
+shared_lib_output(
+    name = "webternet",
+    binary = ":webternet_bin",
+)
+
+# ---------------------------------------------------------------------------
+# Static data files and autoload sentinels
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "configs",
+    srcs = glob(
+        ["configs/**"],
+        exclude = [
+            "configs/cfg/**",
+            "configs/metamod/**",
+        ],
+    ),
+)
+
+filegroup(
+    name = "configs_cfg",
+    srcs = glob(["configs/cfg/**"]),
+)
+
+filegroup(
+    name = "gamedata",
+    srcs = glob(["gamedata/**"]),
+)
+
+filegroup(
+    name = "translations",
+    srcs = glob(["translations/**"]),
+)
+
+filegroup(
+    name = "sourcemod_vdf",
+    srcs = ["configs/metamod/sourcemod.vdf"],
+)
+
+# Empty `<stem>.autoload` files trigger SourceMod's TryAutoload() on startup.
+[write_file(
+    name = stem.replace(".", "_") + "_autoload",
+    out = stem + ".autoload",
+    content = [],
+) for stem in [
+    "bintools",
+    "game.cstrike",
+    "game.tf2",
+    "sdkhooks",
+    "sdktools",
+    "topmenus",
+]]
+
+# ---------------------------------------------------------------------------
+# Bundled SourcePawn plugins (opt-in per server deployment)
+# ---------------------------------------------------------------------------
+
+[sourcemod_plugin(
+    name = "plugin_" + name,
+    src = "plugins/" + name + ".sp",
+    extra_srcs = glob(["plugins/" + name + "/*.sp"], allow_empty = True),
+    plugin_name = name,
+) for name in BUNDLED_PLUGINS]

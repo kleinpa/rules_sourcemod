@@ -1,0 +1,205 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("//:defs.bzl", "sourcemod_extension", "sourcemod_library", "sourcemod_plugin", "sourcemod_test")
+load("//sourcemod:plugins.bzl", "BUNDLED_PLUGINS")
+load(
+    ":package_layout_test.bzl",
+    "extension_linux_suffix_test",
+    "extension_windows_suffix_test",
+    "plugin_layout_test",
+)
+load(":glibc_floor_test.bzl", "glibc_floor_test")
+load(":smx_version_test.bzl", "smx_version_test")
+load(":symbol_closure_test.bzl", "symbol_closure_test")
+
+package(default_visibility = ["//visibility:private"])
+
+sourcemod_library(
+    name = "math_util_lib",
+    testonly = True,
+    hdrs = ["fixtures/include/mylib/math_util.inc"],
+    strip_include_prefix = "fixtures/include",
+)
+
+sourcemod_extension(
+    name = "test_ext",
+    testonly = True,
+    srcs = ["fixtures/test_ext.cpp"],
+    hdrs = ["fixtures/smsdk_config.h"],
+    includes = ["fixtures"],
+    pawn_hdrs = ["test_ext.inc"],
+    tags = ["manual"],
+)
+
+sourcemod_extension(
+    name = "test_branched_ext",
+    testonly = True,
+    srcs = ["fixtures/test_ext.cpp"],
+    hdrs = ["fixtures/smsdk_config.h"],
+    autoload = True,
+    branch = "tf2",
+    extension_name = "custom_tf2",
+    includes = ["fixtures"],
+    pawn_hdrs = ["test_ext.inc"],
+    tags = ["manual"],
+)
+
+sourcemod_plugin(
+    name = "test_plugin",
+    testonly = True,
+    src = "fixtures/test_plugin.sp",
+    defines = ["TEST_FLAG"],
+    deps = [
+        ":math_util_lib",
+        ":test_branched_ext_inc",
+    ],
+    tags = ["manual"],
+)
+
+# Transitions to linux_x86_64, so it needs a Linux C++ toolchain.
+extension_linux_suffix_test(
+    name = "extension_uses_so_suffix_on_linux_test",
+    expected_paths = ["addons/sourcemod/extensions/x64/test_ext.ext.so"],
+    target_compatible_with = ["@platforms//os:linux"],
+    target_under_test = ":test_ext",
+)
+
+extension_linux_suffix_test(
+    name = "branched_extension_layout_linux_test",
+    expected_paths = [
+        "addons/sourcemod/extensions/custom_tf2.autoload",
+        "addons/sourcemod/extensions/x64/custom_tf2.ext.2.tf2.so",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    target_under_test = ":test_branched_ext",
+)
+
+# Transitions to windows_x86_32; needs MSVC or the clang-cl cross toolchain.
+extension_windows_suffix_test(
+    name = "extension_uses_dll_suffix_on_windows_test",
+    expected_paths = ["addons/sourcemod/extensions/test_ext.ext.dll"],
+    tags = ["manual"],
+    target_under_test = ":test_ext",
+)
+
+extension_windows_suffix_test(
+    name = "branched_extension_layout_windows_test",
+    expected_paths = [
+        "addons/sourcemod/extensions/custom_tf2.autoload",
+        "addons/sourcemod/extensions/custom_tf2.ext.2.tf2.dll",
+    ],
+    tags = ["manual"],
+    target_under_test = ":test_branched_ext",
+)
+
+plugin_layout_test(
+    name = "plugin_installs_into_plugins_dir_test",
+    target_under_test = ":test_plugin",
+)
+
+smx_version_test(
+    name = "plugin_emits_sp1_bytecode_test",
+    plugin = ":test_plugin",
+)
+
+sourcemod_test(
+    name = "spshell_unit_test",
+    src = "fixtures/test_spshell.sp",
+    defines = [
+        "ENABLE_BONUS",
+        "EXTRA_OFFSET=5",
+    ],
+    deps = [":math_util_lib"],
+)
+
+build_test(
+    name = "branched_extension_builds_test",
+    targets = [":test_branched_ext"],
+)
+
+# Engine-independent server binaries link against neither the HL2SDK nor srcds,
+# so every symbol they reference must resolve from themselves or DT_NEEDED.
+symbol_closure_test(
+    name = "loader_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:loader",
+)
+
+symbol_closure_test(
+    name = "logic_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:logic",
+)
+
+symbol_closure_test(
+    name = "topmenus_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:topmenus",
+)
+
+symbol_closure_test(
+    name = "bintools_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:bintools",
+)
+
+symbol_closure_test(
+    name = "clientprefs_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:clientprefs",
+)
+
+symbol_closure_test(
+    name = "sqlite_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:sqlite",
+)
+
+symbol_closure_test(
+    name = "geoip_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:geoip",
+)
+
+symbol_closure_test(
+    name = "regex_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:regex",
+)
+
+symbol_closure_test(
+    name = "webternet_resolves_its_symbols_test",
+    lib = "@sourcemod_sdk//:webternet",
+)
+
+build_test(
+    name = "builtin_plugins_build_test",
+    targets = ["//sourcemod:plugin_" + name for name in BUNDLED_PLUGINS],
+)
+
+# Each preset is skipped on platforms its branch cannot target.
+build_test(
+    name = "sourcemod_cstrike_builds_test",
+    targets = ["//sourcemod:sourcemod_cstrike"],
+)
+
+build_test(
+    name = "sourcemod_tf2_builds_test",
+    targets = ["//sourcemod:sourcemod_tf2"],
+)
+
+build_test(
+    name = "sourcemod_l4d2_builds_test",
+    targets = ["//sourcemod:sourcemod_l4d2"],
+)
+
+build_test(
+    name = "sourcemod_sdk2013_builds_test",
+    targets = ["//sourcemod:sourcemod_sdk2013"],
+)
+
+build_test(
+    name = "sourcemod_ep1_builds_test",
+    targets = ["//sourcemod:sourcemod_ep1"],
+)
+
+# Shipped binaries must load on glibc 2.31 / GCC 10 runtimes (Debian 11+), which
+# the hermetic //linux toolchain guarantees regardless of the build host.
+glibc_floor_test(
+    name = "sourcemod_cstrike_glibc_floor_test",
+    srcs = [
+        ":test_ext",
+        "//sourcemod:sourcemod_cstrike",
+    ],
+)

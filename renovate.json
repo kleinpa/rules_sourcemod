@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>kleinpa/renovate-config"],
+  "automerge": true,
+  "automergeType": "branch",
+  "dependencyDashboard": true,
+  "postUpgradeTasks": {
+    "commands": ["bazelisk mod deps"],
+    "executionMode": "branch"
+  },
+  "packageRules": [
+    {
+      "description": "Group build-tool dependencies into a single monthly update",
+      "matchPackageNames": [
+        "bazel_skylib",
+        "platforms",
+        "rules_cc",
+        "rules_pkg"
+      ],
+      "groupName": "build-tools",
+      "schedule": ["on the first day of the month"]
+    },
+    {
+      "description": "Group build-tool dependencies into a single monthly update",
+      "matchManagers": [
+        "github-actions",
+        "bazelisk"
+      ],
+      "groupName": "build-tools",
+      "schedule": ["on the first day of the month"]
+    }
+  ]
+}

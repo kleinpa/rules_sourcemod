@@ -1,0 +1,47 @@
+load(":plugins.bzl", "BUNDLED_PLUGINS")
+load(":server.bzl", "sourcemod_game_server")
+
+package(default_visibility = ["//visibility:public"])
+
+alias(
+    name = "headers",
+    actual = "@sourcemod_sdk//:sourcemod_headers",
+)
+
+alias(
+    name = "curl",
+    actual = "@sourcemod_curl//:curl",
+)
+
+[alias(
+    name = "plugin_" + name,
+    actual = "@sourcemod_sdk//:plugin_" + name,
+) for name in BUNDLED_PLUGINS]
+
+# Game-server presets (one per branch in //hl2sdk:repositories.bzl). Presets a
+# target platform cannot run (e.g. 32-bit-only branches on x86_64) are
+# incompatible there, so `bazel build //...` skips them without fetching their SDK.
+sourcemod_game_server(
+    name = "sourcemod_cstrike",
+    branch = "css",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_tf2",
+    branch = "tf2",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_l4d2",
+    branch = "l4d2",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_sdk2013",
+    branch = "sdk2013",
+)
+
+sourcemod_game_server(
+    name = "sourcemod_ep1",
+    branch = "ep1",
+)
