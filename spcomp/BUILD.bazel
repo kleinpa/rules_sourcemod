@@ -1,0 +1,36 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//spcomp:toolchain.bzl", "spcomp_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+toolchain_type(name = "toolchain_type")
+
+# spcomp is built from source by @sourcemod_sdk; this only wires it up as the
+# default implementation of the toolchain type above. A consumer that wants a
+# different compiler registers its own toolchain rather than forking this.
+spcomp_toolchain(
+    name = "spcomp_impl",
+    compiler = "@sourcemod_sdk//:spcomp",
+    stdlib_includes = "@sourcemod_sdk//:spcomp_stdlib_includes",
+)
+
+toolchain(
+    name = "spcomp_toolchain",
+    toolchain = ":spcomp_impl",
+    toolchain_type = ":toolchain_type",
+)
+
+filegroup(
+    name = "spshell_includes",
+    srcs = [
+        "float.inc",
+        "spshell.inc",
+    ],
+)
+
+cc_binary(
+    name = "spshell_runner",
+    testonly = True,
+    srcs = ["spshell_runner.cc"],
+    deps = ["@rules_cc//cc/runfiles"],
+)

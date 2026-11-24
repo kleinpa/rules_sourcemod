@@ -1,0 +1,124 @@
+--- a/mathlib/mathlib_base.cpp	2026-08-15 23:27:34.491722272 -0400
++++ b/mathlib/mathlib_base.cpp	2026-08-15 23:41:16.373491639 -0400
+@@ -99,7 +99,7 @@
+ _PS_EXTERN_CONST(am_2_o_pi, (float)(2.0 / M_PI));
+ _PS_EXTERN_CONST(am_pi_o_4, (float)(M_PI / 4.0));
+ _PS_EXTERN_CONST(am_4_o_pi, (float)(4.0 / M_PI));
+-_PS_EXTERN_CONST_TYPE(am_sign_mask, int32, 0x80000000);
++_PS_EXTERN_CONST_TYPE(am_sign_mask, int32, (int32)0x80000000);
+ _PS_EXTERN_CONST_TYPE(am_inv_sign_mask, int32, ~0x80000000);
+ _PS_EXTERN_CONST_TYPE(am_min_norm_pos,int32, 0x00800000);
+ _PS_EXTERN_CONST_TYPE(am_mant_mask, int32, 0x7f800000);
+@@ -181,7 +181,7 @@
+ {
+ 	Assert( s_bMathlibInitialized );
+ 	float	root = 0.f;
+-#ifdef _WIN32
++#if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
+ 	_asm
+ 	{
+ 		femms
+@@ -192,6 +192,14 @@
+ 		movd		root, mm0
+ 		femms
+ 	}
++#elif defined(_WIN32)
++	// Clang (a native clang-cl or this module's cross-compiling one) has
++	// no MASM parser for the AMD 3DNow! mnemonics below (femms, PFRSQRT,
++	// ...) -- and since 3DNow was retired industry-wide around 2010,
++	// nothing running this code today has the CPU feature
++	// MathLib_Init() gates this function's selection behind anyway.
++	// sqrtf() is exactly what this was approximating.
++	root = sqrtf(x);
+ #elif _LINUX
+  	__asm __volatile__( "femms" );
+  	__asm __volatile__
+@@ -228,7 +236,7 @@
+ 
+ 	if ( v[0] || v[1] || v[2] )
+ 	{
+-#ifdef _WIN32
++#if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
+ 	_asm
+ 		{
+ 			mov			eax, v
+@@ -251,6 +259,13 @@
+ 			movd		radius, mm1
+ 			femms
+ 		}
++#elif defined(_WIN32)
++		// See _3DNow_Sqrt's comment: Clang can't assemble this, and
++		// nothing selects it at runtime on any CPU still in use.
++		// _VectorNormalize (above) is the exact same signature and
++		// contract (FASTCALL, normalizes in place, returns the
++		// pre-normalization length).
++		radius = _VectorNormalize(vec);
+ #elif _LINUX	
+ 		long long a,c;
+     		int b,d;
+@@ -299,7 +314,7 @@
+ {
+ 	Assert( s_bMathlibInitialized );
+ 	float	r2 = 1.f;
+-#ifdef _WIN32
++#if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
+ 	_asm { // AMD 3DNow only routine
+ 		mov			eax, v
+ 		femms
+@@ -315,6 +330,11 @@
+ 		movd		[r2], mm0
+ 		femms
+ 	}
++#elif defined(_WIN32)
++	// See _3DNow_Sqrt's comment: Clang can't assemble this, and nothing
++	// selects it at runtime on any CPU still in use. _InvRSquared
++	// (above) is the exact same signature and contract.
++	r2 = _InvRSquared(v);
+ #elif _LINUX
+ 		long long a,c;
+     		int b;
+@@ -1715,7 +1735,7 @@
+ 	return 1;
+ }
+ 
+-#if _WIN32
++#if _WIN32 && defined(_MSC_VER) && !defined(__clang__)
+ _declspec(naked)
+ #ifndef PFN_VECTORMA
+ void VectorMA( const float *start, float scale, const float *direction, float *dest )
+@@ -1765,7 +1785,7 @@
+ }
+ #endif
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
+ void 
+ _declspec(naked)
+ _SSE_VectorMA( const float *start, float scale, const float *direction, float *dest )
+@@ -2544,7 +2564,7 @@
+ // VectorMA routines
+ //-----------------------------------------------------------------------------
+ 
+-#if _WIN32
++#if _WIN32 && defined(_MSC_VER) && !defined(__clang__)
+ _declspec(naked)
+ 	#if PFN_VECTORMA
+ void __cdecl _VectorMA( const Vector &start, float scale, const Vector &direction, Vector &dest )
+@@ -4915,7 +4935,7 @@
+ {
+ 	Vector vDir;
+ 	float t = CalcClosestPointToLineT( P, vLineA, vLineB, vDir );
+-	t = clamp( t, 0, 1 );
++	t = clamp( t, 0.0f, 1.0f );
+ 	if ( outT ) 
+ 	{
+ 		*outT = t;
+@@ -4987,7 +5007,7 @@
+ {
+ 	Vector2D vDir;
+ 	float t = CalcClosestPointToLineT2D( P, vLineA, vLineB, vDir );
+-	t = clamp( t, 0, 1 );
++	t = clamp( t, 0.0f, 1.0f );
+ 	if ( outT )
+ 	{
+ 		*outT = t;

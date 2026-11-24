@@ -1,0 +1,75 @@
+"""Target platforms and shared config_settings for SourceMod builds."""
+
+load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
+
+package(default_visibility = ["//visibility:public"])
+
+# Bazel's MSVC autoconfiguration generates cc-compiler-x64_x86_windows in
+# @local_config_cc but registers only x64 and arm64.
+toolchain(
+    name = "msvc_x86_32_toolchain",
+    exec_compatible_with = HOST_CONSTRAINTS,
+    target_compatible_with = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:windows",
+    ],
+    toolchain = "@local_config_cc//:cc-compiler-x64_x86_windows",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+# OS+CPU combinations; select on @platforms constraints directly for one axis.
+config_setting(
+    name = "is_windows_x86_32",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+config_setting(
+    name = "is_windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "is_linux_x86_32",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+platform(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+platform(
+    name = "windows_x86_32",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+platform(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
