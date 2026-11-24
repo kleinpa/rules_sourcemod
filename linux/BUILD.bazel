@@ -1,0 +1,33 @@
+# Hermetic clang + Debian bullseye toolchains (see toolchain.bzl). Opt in with
+#   register_toolchains("@rules_sourcemod//linux:all")
+# The implementation repository is only fetched once a toolchain is selected.
+
+toolchain(
+    name = "x86_64",
+    exec_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    toolchain = "@llvm_linux//:cc-clang-x86_64-linux",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "x86_32",
+    exec_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+    toolchain = "@llvm_linux//:cc-clang-x86_32-linux",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    visibility = ["//visibility:public"],
+)

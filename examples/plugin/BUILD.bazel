@@ -1,0 +1,8 @@
+load("@rules_sourcemod//:defs.bzl", "sourcemod_plugin")
+
+sourcemod_plugin(
+    name = "plugin",
+    src = "bot_fill.sp",
+    plugin_name = "bot_fill",
+    visibility = ["//visibility:public"],
+)

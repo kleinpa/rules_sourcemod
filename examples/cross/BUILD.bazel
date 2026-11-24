@@ -1,0 +1,45 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_sourcemod//:defs.bzl", "platform_transition_pkg")
+
+# Binaries are built for the server's platform. SourcePawn plugins run on any
+# platform, so //cross:sourcemod_layer uses them directly.
+platform_transition_pkg(
+    name = "sourcemod_windows",
+    src = "@rules_sourcemod//sourcemod:sourcemod_ep1",
+    tags = ["manual"],
+    target_platform = "@rules_sourcemod//platforms:windows_x86_32",
+)
+
+platform_transition_pkg(
+    name = "auth_by_url_windows",
+    src = "//extension:auth_by_url",
+    tags = ["manual"],
+    target_platform = "@rules_sourcemod//platforms:windows_x86_32",
+)
+
+pkg_tar(
+    name = "sourcemod_layer",
+    srcs = [
+        ":auth_by_url_windows",
+        ":sourcemod_windows",
+        "@rules_sourcemod//sourcemod:plugin_basecommands",
+        "@rules_sourcemod//sourcemod:plugin_nextmap",
+    ],
+    package_dir = "/opt/game/mymod",
+    tags = ["manual"],
+)
+
+# This engine needs Metamod's path relative to the engine directory. It replaces
+# a file in :sourcemod_layer, so stack it on top as a separate layer.
+pkg_files(
+    name = "metamod_vdf",
+    srcs = ["metamod.vdf"],
+    prefix = "addons",
+)
+
+pkg_tar(
+    name = "metamod_vdf_layer",
+    srcs = [":metamod_vdf"],
+    package_dir = "/opt/game/mymod",
+)

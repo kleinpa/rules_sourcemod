@@ -1,0 +1,20 @@
+"""Example projects that use rules_sourcemod."""
+
+module(name = "rules_sourcemod_examples")
+
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+bazel_dep(name = "rules_sourcemod")
+
+# Outside this repository, use git_override as shown in the main README.
+local_path_override(
+    module_name = "rules_sourcemod",
+    path = "..",
+)
+
+register_toolchains("@rules_sourcemod//linux:all")
+
+# Needed only by //cross. Accepts the Microsoft Windows SDK and MSVC++ Runtime
+# license (https://github.com/Jake-Shadle/xwin#license).
+sourcemod = use_extension("@rules_sourcemod//:extensions.bzl", "sourcemod")
+sourcemod.windows_cross_toolchain(accept_license = True)
+use_repo(sourcemod, "llvm_toolchain_windows_x86_32")

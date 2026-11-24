@@ -1,0 +1,2 @@
+# Separate Bazel workspace that depends on this one.
+examples

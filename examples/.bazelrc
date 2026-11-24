@@ -1,0 +1,5 @@
+# The only non-registry dependency is the local rules_sourcemod checkout.
+common --lockfile_mode=off
+
+# Windows builds from Linux: bazel build --config=cross-windows //cross:sourcemod_layer
+build:cross-windows --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows

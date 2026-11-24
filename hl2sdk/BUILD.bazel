@@ -1,0 +1,44 @@
+package(default_visibility = ["//visibility:public"])
+
+# Engine-branch SDKs (HL2SDK + Metamod headers) for extensions that call engine APIs.
+alias(
+    name = "css",
+    actual = "@hl2sdk_css//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "tf2",
+    actual = "@hl2sdk_tf2//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "hl2dm",
+    actual = "@hl2sdk_hl2dm//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "dods",
+    actual = "@hl2sdk_dods//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "l4d2",
+    actual = "@hl2sdk_l4d2//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "sdk2013",
+    actual = "@hl2sdk_sdk2013//:hl2sdk",
+    tags = ["manual"],
+)
+
+alias(
+    name = "ep1",
+    actual = "@hl2sdk_ep1//:hl2sdk",
+    tags = ["manual"],
+)

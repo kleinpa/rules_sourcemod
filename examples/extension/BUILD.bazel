@@ -1,0 +1,38 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_filegroup")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_sourcemod//:defs.bzl", "sourcemod_extension", "sourcemod_plugin")
+
+sourcemod_extension(
+    name = "extension",
+    srcs = ["src/extension.cpp"],
+    hdrs = ["src/smsdk_config.h"],
+    extension_name = "auth_by_url",
+    includes = ["src"],
+    pawn_hdrs = ["include/auth_by_url.inc"],
+    pawn_strip_include_prefix = "include",
+    deps = ["@rules_sourcemod//sourcemod:curl"],
+)
+
+sourcemod_plugin(
+    name = "plugin",
+    src = "auth_by_url.sp",
+    plugin_name = "auth_by_url",
+    deps = [":extension"],
+)
+
+# Other packages and modules depend on this.
+pkg_filegroup(
+    name = "auth_by_url",
+    srcs = [
+        ":extension",
+        ":plugin",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Release archive, extracted into the game directory.
+pkg_tar(
+    name = "auth_by_url_tar",
+    srcs = [":auth_by_url"],
+    extension = "tar.gz",
+)

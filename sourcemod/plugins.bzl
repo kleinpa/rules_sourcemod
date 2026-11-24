@@ -1,0 +1,28 @@
+"""Bundled SourcePawn plugins shipped in the SourceMod source tree."""
+
+BUNDLED_PLUGINS = [
+    "admin-flatfile",
+    "admin-sql-prefetch",
+    "admin-sql-threaded",
+    "adminhelp",
+    "adminmenu",
+    "antiflood",
+    "basebans",
+    "basechat",
+    "basecomm",
+    "basecommands",
+    "basetriggers",
+    "basevotes",
+    "clientprefs",
+    "funcommands",
+    "funvotes",
+    "mapchooser",
+    "nextmap",
+    "nominations",
+    "playercommands",
+    "randomcycle",
+    "reservedslots",
+    "rockthevote",
+    "sounds",
+    "sql-admin-manager",
+]

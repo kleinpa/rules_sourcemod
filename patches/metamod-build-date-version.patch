@@ -1,0 +1,11 @@
+--- a/public/metamod_version.h
++++ b/public/metamod_version.h
+@@ -54,7 +54,7 @@
+ #define MMS_VERSION_STRING	MMS_BUILD_MAJOR "." MMS_BUILD_MINOR "." MMS_BUILD_RELEASE "-" MMS_BUILD_TAG
+ #define MMS_VERSION_FILE		1,12,0,0
+ #endif
+-#define MMS_BUILD_TIMESTAMP	__DATE__ " " __TIME__
++#define MMS_BUILD_TIMESTAMP	"Jan  1 1980 00:00:00"
+ 
+ #if !defined(MMS_GENERATED_BUILD) || !defined(MMS_USE_VERSIONLIB)
+ # define METAMOD_VERSION 		MMS_VERSION_STRING

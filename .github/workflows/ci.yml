@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs native x86_64 tests on Linux/Windows and 32-bit builds on both (where
+  # x86_32 is a target platform, not an execution platform). Linux jobs use the
+  # hermetic //linux toolchain this module registers for its own builds.
+  # Presets a platform cannot target are incompatible there and skipped by //...
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            platform: //platforms:linux_x86_64
+            cache: linux-x64
+            mode: test
+            targets: //...
+          - name: Linux x86_32
+            os: ubuntu-latest
+            platform: //platforms:linux_x86_32
+            cache: linux-x86
+            mode: build
+            targets: //sourcemod/... //spcomp/...
+          - name: Windows x86_64
+            os: windows-latest
+            platform: //platforms:windows_x86_64
+            cache: windows-x64
+            mode: test
+            targets: //...
+          - name: Windows x86_32
+            os: windows-latest
+            platform: //platforms:windows_x86_32
+            cache: windows-x86
+            mode: build
+            # windows_x86_32 is not an execution platform, so tests can't be
+            # built for it. Positive patterns only: PowerShell eats `--`, which
+            # Bazel needs before a negative pattern like -//tests/...
+            targets: //sourcemod/... //spcomp/...
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ matrix.cache }}
+          repository-cache: true
+
+      - name: ${{ matrix.mode == 'test' && 'Test' || 'Build' }}
+        run: bazel ${{ matrix.mode }} --platforms=${{ matrix.platform }} ${{ matrix.targets }}
+
+      - name: Build examples
+        if: matrix.cache == 'linux-x64'
+        working-directory: examples
+        run: bazel build //...
+
+      - name: Windows suffix test
+        if: runner.os == 'Windows' && matrix.mode == 'test'
+        run: >-
+          bazel test
+          //tests:extension_uses_dll_suffix_on_windows_test
+          //tests:branched_extension_layout_windows_test
+
+  cross-windows-x86:
+    name: Linux -> Windows x86_32 (clang-cl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: linux-cross-windows-x86
+          repository-cache: true
+
+      - name: Cross-compile extension and sourcemod_ep1
+        run: >-
+          bazel build --platforms=//platforms:windows_x86_32
+          --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows
+          //tests:test_ext //sourcemod:sourcemod_ep1
+
+      - name: Cross-compile example
+        working-directory: examples
+        run: bazel build --config=cross-windows //cross:sourcemod_layer
+
+      - name: Windows suffix test
+        run: >-
+          bazel test
+          --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows
+          //tests:extension_uses_dll_suffix_on_windows_test
+          //tests:branched_extension_layout_windows_test

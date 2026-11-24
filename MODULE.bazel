@@ -1,0 +1,56 @@
+"""rules_sourcemod — Bazel rules for building SourceMod, Metamod, extensions, and plugins."""
+
+module(
+    name = "rules_sourcemod",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "boringssl", version = "0.20260616.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
+# Needed so //platforms:msvc_x86_32_toolchain can register the 32-bit MSVC
+# toolchain Bazel autoconfigures in @local_config_cc but omits from defaults.
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc")
+
+register_toolchains(
+    "//spcomp:spcomp_toolchain",
+    "//platforms:msvc_x86_32_toolchain",
+)
+
+sourcemod = use_extension("//:extensions.bzl", "sourcemod")
+use_repo(
+    sourcemod,
+    "hl2sdk_css",
+    "hl2sdk_dods",
+    "hl2sdk_ep1",
+    "hl2sdk_hl2dm",
+    "hl2sdk_l4d2",
+    "hl2sdk_sdk2013",
+    "hl2sdk_tf2",
+    "llvm_linux",
+    "metamod_source",
+    "sourcemod_curl",
+    "sourcemod_sdk",
+)
+
+# This repo's own builds use the hermetic clang + Debian bullseye toolchain on
+# Linux (glibc 2.31 floor, 32-bit Linux support); consumers opt in by registering
+# @rules_sourcemod//linux:all themselves.
+register_toolchains(
+    "//linux:all",
+    dev_dependency = True,
+)
+
+# Opt-in Linux -> windows_x86_32 cross-compilation via clang-cl/lld-link + xwin:
+#   bazel build --platforms=//platforms:windows_x86_32 \
+#       --extra_toolchains=@llvm_toolchain_windows_x86_32//:cc-toolchain-x86_32-windows \
+#       //...
+# Marked dev_dependency so this module's Microsoft SDK/CRT license opt-in applies
+# only to builds rooted here; consumers opt in via the same tag in their MODULE.bazel.
+sourcemod_dev = use_extension("//:extensions.bzl", "sourcemod", dev_dependency = True)
+sourcemod_dev.windows_cross_toolchain(accept_license = True)
+use_repo(sourcemod_dev, "llvm_toolchain_windows_x86_32")
